@@ -38,8 +38,8 @@ import Flutter
         let factory = NDIViewFactory(messenger: controller.binaryMessenger)
         registrar?.register(factory, withId: "ndi-view")
         
-        // 3. IMPORTANT : On garde l'enregistrement automatique des plugins
-        GeneratedPluginRegistrant.register(with: self)
+        // 3. IMPORTANT : On garde l'enregistrement automatique des plugins (Commenté car pas de plugins tiers)
+        // GeneratedPluginRegistrant.register(with: self)
         
         return super.application(application, didFinishLaunchingWithOptions: launchOptions)
     }
