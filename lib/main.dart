@@ -966,8 +966,14 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
 class NdiNativeView extends StatelessWidget {
   final String? sourceName;
   final String? quality; // "Highest", "Medium", "Lowest"
+  final bool? muted;
   
-  const NdiNativeView({super.key, this.sourceName, this.quality});
+  const NdiNativeView({
+    super.key, 
+    this.sourceName, 
+    this.quality,
+    this.muted,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -977,7 +983,8 @@ class NdiNativeView extends StatelessWidget {
           layoutDirection: TextDirection.ltr,
           creationParams: {
             'name': sourceName,
-            'quality': quality ?? "Highest"
+            'quality': quality ?? "Highest",
+            'muted': muted ?? false,
           },
           creationParamsCodec: const StandardMessageCodec());
     }
