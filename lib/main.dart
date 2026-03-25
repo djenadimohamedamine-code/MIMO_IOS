@@ -558,9 +558,26 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
                   onTap: _showQualityMenu,
                   child: Container(
                     padding: const EdgeInsets.all(10),
-                    margin: const EdgeInsets.only(bottom: 12),
-                    decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(30)),
-                    child: const Icon(Icons.settings, color: Colors.white, size: 24),
+                // ── BOUTONS ACTION
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12), // Added margin to the whole row
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      // BOUTON REFRESH
+                      IconButton(
+                        onPressed: _refreshSources,
+                        icon: const Icon(Icons.refresh, color: Colors.white, size: 28),
+                        style: IconButton.styleFrom(backgroundColor: Colors.black45),
+                      ),
+                      const SizedBox(width: 12),
+                      // BOUTON ENGRENAGE
+                      IconButton(
+                        onPressed: _showQualityMenu,
+                        icon: const Icon(Icons.settings, color: Colors.white, size: 28),
+                        style: IconButton.styleFrom(backgroundColor: Colors.black45),
+                      ),
+                    ],
                   ),
                 ),
                 // 🖥️ Plein écran
