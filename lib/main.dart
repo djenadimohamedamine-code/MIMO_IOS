@@ -465,6 +465,17 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
     );
   }
 
+  void _refreshSources() {
+    _viewChannel?.invokeMethod('refreshSources');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Recherche de nouvelles sources NDI..."),
+        duration: Duration(seconds: 1),
+        backgroundColor: Colors.blueAccent,
+      ),
+    );
+  }
+
   String _formatDuration(int seconds) {
     int m = seconds ~/ 60;
     int s = seconds % 60;
