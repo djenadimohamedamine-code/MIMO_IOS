@@ -362,26 +362,50 @@ class NdiPlayerScreen extends StatefulWidget {
 }
 
 class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
-  static const _channel = MethodChannel('com.antigravity/ndi');
-  String _quality = "Highest";
+  MethodChannel? _viewChannel;
+  String _quality = "Lowest";
   bool _isLandscape = true;
   bool _isMuted = false;
+  bool _isRecording = false;
+  int _recordSeconds = 0;
+  Timer? _recordTimer;
 
   @override
   void initState() {
     super.initState();
-    // ✅ On force le paysage dès l'entrée pour le monitoring
     SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
     ]);
   }
 
   @override
   void dispose() {
-    // Retour en portrait quand on quitte
+    _recordTimer?.cancel();
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     super.dispose();
+  }
+
+  void _onViewCreated(int id) {
+    _viewChannel = MethodChannel('com.antigravity/ndi_view_$id');
+  }
+
+  void _toggleRecord() async {
+    if (_viewChannel == null) return;
+    final bool? recording = await _viewChannel!.invokeMethod('toggleRecord');
+    if (recording != null) {
+      setState(() {
+        _isRecording = recording;
+        if (_isRecording) {
+          _recordSeconds = 0;
+          _recordTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+            setState(() => _recordSeconds++);
+          });
+        } else {
+          _recordTimer?.cancel();
+        }
+      });
+    }
   }
 
   void _toggleLandscape() {
@@ -403,25 +427,19 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
       builder: (ctx) => Container(
         decoration: BoxDecoration(
           color: Colors.black.withOpacity(0.92),
-          borderRadius:
-              const BorderRadius.vertical(top: Radius.circular(20)),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               margin: const EdgeInsets.symmetric(vertical: 10),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2)),
+              width: 40, height: 4,
+              decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
             ),
             const Padding(
               padding: EdgeInsets.only(bottom: 16),
-              child: Text("Qualité du flux",
-                  style: TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.bold)),
+              child: Text("Qualité du flux", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ),
             _qualityOption("Highest", "1080p / 4K MAX"),
             _qualityOption("Medium", "720p"),
@@ -441,9 +459,16 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
       subtitle: Text(desc, style: const TextStyle(color: Colors.grey)),
       onTap: () {
         setState(() => _quality = val);
+        _viewChannel?.invokeMethod('switchQuality', val);
         Navigator.pop(context);
       },
     );
+  }
+
+  String _formatDuration(int seconds) {
+    int m = seconds // 60;
+    int s = seconds % 60;
+    return "${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}";
   }
 
   @override
@@ -452,63 +477,70 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // ── VIDÉO : centrée, 16:9, avec bandes noires en portrait
           Center(
             child: AspectRatio(
               aspectRatio: 16 / 9,
               child: NdiNativeView(
-                key: ValueKey("${widget.sourceName}_${_quality}_$_isMuted"),
+                key: ValueKey("${widget.sourceName}"), // On garde une clé simple, le channel gère le reste
                 sourceName: widget.sourceName,
                 quality: _quality,
                 muted: _isMuted,
+                onViewCreated: _onViewCreated,
               ),
             ),
           ),
 
-          // ── BOUTON RETOUR (haut gauche)
+          // ── BOUTON RETOUR
           Positioned(
             top: MediaQuery.of(context).padding.top + 8,
             left: 12,
-            child: GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(30),
-                ),
-                child: const Icon(Icons.arrow_back_ios_new,
-                    color: Colors.white, size: 22),
-              ),
+            child: IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 22),
+              style: IconButton.styleFrom(backgroundColor: Colors.black54),
             ),
           ),
 
-          // ── TITRE SOURCE (haut centre)
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 10,
-            left: 0,
-            right: 0,
-            child: Center(
+          // ── INDICATEUR ENREGISTREMENT (REC)
+          if (_isRecording)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 10,
+              left: 70,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 14, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.black45,
-                  borderRadius: BorderRadius.circular(20),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(20)),
+                child: Row(
+                  children: [
+                    const Icon(Icons.circle, color: Colors.white, size: 10),
+                    const SizedBox(width: 8),
+                    Text("REC ${_formatDuration(_recordSeconds)}",
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                  ],
                 ),
-                child: Text(widget.sourceName,
-                    style: const TextStyle(
-                        color: Colors.white70, fontSize: 13)),
               ),
             ),
-          ),
 
+          // ── BOUTONS ACTIONS (Droit)
           Positioned(
             bottom: MediaQuery.of(context).padding.bottom + 20,
             right: 16,
             child: Column(
               children: [
-                // 🔊 Bouton Mute (Pour libérer du Wi-Fi si signal trop faible)
+                // 🔴 BOUTON REC
+                GestureDetector(
+                  onTap: _toggleRecord,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: _isRecording ? Colors.red : Colors.black54,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white24, width: 2),
+                    ),
+                    child: Icon(_isRecording ? Icons.stop : Icons.videocam, color: Colors.white, size: 28),
+                  ),
+                ),
+                // 🔊 Bouton Mute
                 GestureDetector(
                   onTap: () => setState(() => _isMuted = !_isMuted),
                   child: Container(
@@ -518,42 +550,30 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
                       color: _isMuted ? Colors.redAccent : Colors.black54,
                       borderRadius: BorderRadius.circular(30),
                     ),
-                    child: Icon(_isMuted ? Icons.volume_off : Icons.volume_up,
-                        color: Colors.white, size: 26),
+                    child: Icon(_isMuted ? Icons.volume_off : Icons.volume_up, color: Colors.white, size: 24),
                   ),
                 ),
-                // Engrenage → Qualité
+                // ⚙️ Qualité
                 GestureDetector(
                   onTap: _showQualityMenu,
                   child: Container(
                     padding: const EdgeInsets.all(10),
                     margin: const EdgeInsets.only(bottom: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                    child: const Icon(Icons.settings,
-                        color: Colors.white, size: 26),
+                    decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(30)),
+                    child: const Icon(Icons.settings, color: Colors.white, size: 24),
                   ),
                 ),
-                // Plein écran paysage 16:9
+                // 🖥️ Plein écran
                 GestureDetector(
                   onTap: _toggleLandscape,
                   child: Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: _isLandscape
-                          ? Colors.greenAccent.withOpacity(0.85)
-                          : Colors.black54,
+                      color: _isLandscape ? Colors.greenAccent.withOpacity(0.85) : Colors.black54,
                       borderRadius: BorderRadius.circular(30),
                     ),
-                    child: Icon(
-                      _isLandscape
-                          ? Icons.fullscreen_exit
-                          : Icons.stay_current_landscape,
-                      color: _isLandscape ? Colors.black : Colors.white,
-                      size: 26,
-                    ),
+                    child: Icon(_isLandscape ? Icons.fullscreen_exit : Icons.fullscreen,
+                        color: _isLandscape ? Colors.black : Colors.white, size: 24),
                   ),
                 ),
               ],
@@ -967,12 +987,14 @@ class NdiNativeView extends StatelessWidget {
   final String? sourceName;
   final String? quality; // "Highest", "Medium", "Lowest"
   final bool? muted;
+  final PlatformViewCreatedCallback? onViewCreated;
   
   const NdiNativeView({
     super.key, 
     this.sourceName, 
     this.quality,
     this.muted,
+    this.onViewCreated,
   });
 
   @override
@@ -980,6 +1002,7 @@ class NdiNativeView extends StatelessWidget {
     if (Platform.isIOS) {
       return UiKitView(
           viewType: 'ndi-view',
+          onPlatformViewCreated: onViewCreated,
           layoutDirection: TextDirection.ltr,
           creationParams: {
             'name': sourceName,
