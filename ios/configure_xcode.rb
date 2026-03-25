@@ -23,7 +23,7 @@ begin
 
   # 2. Add Swift files to the project
   group = project.main_group.find_subpath('Runner', true)
-  files = ['NDIManager.swift', 'NDIView.swift', 'NDI-Bridging-Header.h']
+  files = ['NDIManager.swift', 'NDIView.swift', 'NdiCameraPreview.swift', 'NDI-Bridging-Header.h']
 
   files.each do |f|
     file_ref = group.find_file_by_path(f)
