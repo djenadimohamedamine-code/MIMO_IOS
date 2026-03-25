@@ -1,71 +1,54 @@
-name: "MIMO_NDI iOS BUILD"
-
+name: MIMO_NDI_BUILD
 on:
   push:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   build:
     runs-on: macos-14
     steps:
-      - name: "Checkout Code"
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: "Installer Flutter"
+      - name: Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.0'
           channel: 'stable'
 
-      - name: "Télécharger et extraire le SDK NDI"
+      - name: Create_Project
+        run: flutter create --project-name=mimo_ndi --platforms=ios .
+
+      - name: Fetch_NDI
         run: |
-          echo "Installation de p7zip..."
           brew install p7zip
-          
-          # Création des dossiers dans le sous-dossier du projet
-          mkdir -p ndi_player_app/ios/NDISDK/lib/
-          mkdir -p ndi_player_app/ios/NDISDK/include/
-          
-          cd ndi_player_app/ios
-          echo "Téléchargement de libndi_ios.zip..."
+          mkdir -p ios/NDISDK/lib/
+          mkdir -p ios/NDISDK/include/
+          cd ios
           curl -L "https://github.com/djenadimohamedamine-code/MIMO_IOS/releases/download/v1.0.1-stable/libndi_ios.zip" -o "libndi_ios.zip"
-          
-          echo "Téléchargement de include.7z..."
           curl -L "https://github.com/djenadimohamedamine-code/MIMO_IOS/releases/download/v1.0.1-stable/include.7z" -o "include.7z"
-          
-          echo "Extraction de libndi_ios.zip..."
           unzip -o libndi_ios.zip -d temp_lib
           find temp_lib -name "*.a" -exec cp {} NDISDK/lib/libndi_ios.a \;
-          
-          echo "Extraction de include.7z..."
-          7z x include.7z -oNDISDK/include/ -y || echo "Erreur headers"
-          
-          echo "Vérification..."
-          ls -lh NDISDK/lib/libndi_ios.a || (echo "❌ libndi_ios.a MANQUANT" ; exit 1)
-          ls -lh NDISDK/include/ || echo "⚠️ Dossier include vide"
+          7z x include.7z -oNDISDK/include/ -y
 
-      - name: "Installer les dépendances Flutter"
-        working-directory: ndi_player_app
+      - name: Deps
         run: |
           flutter config --enable-ios
           flutter pub get
 
-      - name: "Configurer Xcode pour NDI"
-        working-directory: ndi_player_app/ios
+      - name: Xcode_Config
         run: |
           sudo gem install xcodeproj
+          cd ios
           ruby configure_xcode.rb
 
-      - name: "Installation CocoaPods"
-        working-directory: ndi_player_app/ios
-        run: pod install --repo-update
+      - name: Pods
+        run: |
+          cd ios
+          pod install --repo-update
 
-      - name: "Générer l'IPA (Non signé)"
-        working-directory: ndi_player_app
+      - name: Build
         run: |
           flutter build ios --release --no-codesign --verbose
           cd build/ios/iphoneos
@@ -73,8 +56,8 @@ jobs:
           cp -r Runner.app Payload/
           zip -r MIMO_NDI.ipa Payload
 
-      - name: "Exporter l'IPA (.ipa)"
-          uses: actions/upload-artifact@v4
-          with:
-            name: mimo-ndi-ipa
-            path: ndi_player_app/build/ios/iphoneos/MIMO_NDI.ipa
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: mimo-ndi-ipa
+          path: build/ios/iphoneos/MIMO_NDI.ipa
