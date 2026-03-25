@@ -553,29 +553,31 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
                     child: Icon(_isMuted ? Icons.volume_off : Icons.volume_up, color: Colors.white, size: 24),
                   ),
                 ),
-                // ⚙️ Qualité
-                GestureDetector(
-                  onTap: _showQualityMenu,
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                // ── BOUTONS ACTION
+                // ⚙️ + 🔄 Boutons Action (Refresh & Settings)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 12), // Added margin to the whole row
+                  padding: const EdgeInsets.only(bottom: 12),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      // BOUTON REFRESH
-                      IconButton(
-                        onPressed: _refreshSources,
-                        icon: const Icon(Icons.refresh, color: Colors.white, size: 28),
-                        style: IconButton.styleFrom(backgroundColor: Colors.black45),
+                      // REFRESH
+                      GestureDetector(
+                        onTap: _refreshSources,
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(30)),
+                          child: const Icon(Icons.refresh, color: Colors.white, size: 24),
+                        ),
                       ),
-                      const SizedBox(width: 12),
-                      // BOUTON ENGRENAGE
-                      IconButton(
-                        onPressed: _showQualityMenu,
-                        icon: const Icon(Icons.settings, color: Colors.white, size: 28),
-                        style: IconButton.styleFrom(backgroundColor: Colors.black45),
+                      const SizedBox(width: 8),
+                      // SETTINGS
+                      GestureDetector(
+                        onTap: _showQualityMenu,
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(30)),
+                          child: const Icon(Icons.settings, color: Colors.white, size: 24),
+                        ),
                       ),
                     ],
                   ),
