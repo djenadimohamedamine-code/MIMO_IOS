@@ -117,30 +117,51 @@ class NDIView: NSObject, FlutterPlatformView {
     }
 
     private func startReceive(sourceName: String, quality: String) {
-        if let old = recvInstance { NDIlib_recv_destroy(old); recvInstance = nil }
-        
-        var recvCreate = NDIlib_recv_create_v3_t()
-        guard let find = NDIManager.shared.findInstance else { return }
-        
-        var noSources: UInt32 = 0
-        let currentSources = NDIlib_find_get_current_sources(find, &noSources)
-        var targetSource: NDIlib_source_t?
-        
-        if noSources > 0, let sources = currentSources {
-            for i in 0..<Int(noSources) {
-                if String(cString: sources[i].p_ndi_name) == sourceName {
-                    targetSource = sources[i]; break
+        // IMPORTANT: On fait le switch sur la file d'attente NDI, pas sur l'UI Thread
+        receiveQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Si une instance existe déjà, on la libère proprement
+            if let old = self.recvInstance { 
+                NDIlib_recv_destroy(old)
+                self.recvInstance = nil 
+            }
+
+            var recvCreate = NDIlib_recv_create_v3_t()
+            guard let find = NDIManager.shared.findInstance else { return }
+            
+            var noSources: UInt32 = 0
+            let currentSources = NDIlib_find_get_current_sources(find, &noSources)
+            var targetSource: NDIlib_source_t?
+            
+            if noSources > 0, let sources = currentSources {
+                for i in 0..<Int(noSources) {
+                    if String(cString: sources[i].p_ndi_name) == sourceName {
+                        targetSource = sources[i]; break
+                    }
                 }
             }
+            
+            guard let source = targetSource else { 
+                print("⚠️ Source NDI introuvable")
+                return 
+            }
+            
+            recvCreate.source_to_connect_to = source
+            recvCreate.color_format = NDIlib_recv_color_format_BGRX_BGRA
+            
+            // Si on reçoit "480p" ou "Lowest" de Flutter, on active le mode Proxy
+            if quality == "480p" || quality == "Lowest" {
+                recvCreate.bandwidth = NDIlib_recv_bandwidth_lowest
+                print("📺 Mode Proxy (480p) activé")
+            } else {
+                recvCreate.bandwidth = NDIlib_recv_bandwidth_highest
+                print("📺 Mode HD activé")
+            }
+            
+            recvCreate.allow_video_fields = false
+            self.recvInstance = NDIlib_recv_create_v3(&recvCreate)
         }
-        
-        guard let source = targetSource else { return }
-        recvCreate.source_to_connect_to = source
-        recvCreate.color_format = NDIlib_recv_color_format_BGRX_BGRA
-        // PROXY DEFAULT
-        recvCreate.bandwidth = (quality == "Lowest") ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest
-        recvCreate.allow_video_fields = false
-        recvInstance = NDIlib_recv_create_v3(&recvCreate)
     }
 
     private func startCaptureLoop() {
