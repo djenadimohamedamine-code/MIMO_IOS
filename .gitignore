@@ -1,0 +1,17 @@
+*.tmp
+*.7z
+*.zip
+
+# ON IGNORE LE GROS FICHIER SDK NDI (743 Mo) - JAMAIS SUR GIT
+# Il est hébergé en tant que GitHub Release
+ios/NDISDK/lib/libndi_ios.a
+
+# Suppression du support des morceaux .part*
+*.part*
+
+# Autres
+**/build/
+**/Pods/
+.flutter-plugins
+.flutter-plugins-dependencies
+.dart_tool/

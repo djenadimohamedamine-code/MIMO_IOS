@@ -1,0 +1,5 @@
+# Clean config for the new repo
+# No LFS needed.
+*.a -text
+*.h -text
+*.JPG -text
