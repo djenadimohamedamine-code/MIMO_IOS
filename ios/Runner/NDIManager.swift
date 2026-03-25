@@ -85,6 +85,11 @@ class NDIManager: NSObject {
         }
     }
     
+    func getCaptureSession() -> AVCaptureSession? {
+        if captureSession == nil { setupCamera() }
+        return captureSession
+    }
+    
     private func setupCamera() {
         let session = AVCaptureSession()
         session.sessionPreset = .hd1280x720

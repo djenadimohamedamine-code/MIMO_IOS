@@ -54,5 +54,11 @@
 		<string>MIMO_NDI needs access to your camera to broadcast NDI video.</string>
 		<key>NSMicrophoneUsageDescription</key>
 		<string>MIMO_NDI needs access to your microphone to broadcast NDI audio.</string>
+
+		<!-- PHOTO LIBRARY FOR RECORDING -->
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>Besoin d'accéder à la galerie pour sauvegarder vos captures NDI.</string>
+		<key>NSPhotoLibraryAddUsageDescription</key>
+		<string>Besoin d'enregistrer les vidéos NDI dans vos photos.</string>
 	</dict>
 </plist>

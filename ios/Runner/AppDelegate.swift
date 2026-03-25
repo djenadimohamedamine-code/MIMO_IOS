@@ -33,10 +33,14 @@ import Flutter
             }
         })
         
-        // Register NDI Native View
+        // Register NDI Native View (Récepteur)
         let registrar = self.registrar(forPlugin: "NDIPlugin")
         let factory = NDIViewFactory(messenger: controller.binaryMessenger)
         registrar?.register(factory, withId: "ndi-view")
+        
+        // Register Camera Preview (Émetteur)
+        let cameraFactory = NdiCameraPreviewFactory()
+        registrar?.register(cameraFactory, withId: "ndi-camera-preview")
         
         // 3. IMPORTANT : On garde l'enregistrement automatique des plugins (Commenté car pas de plugins tiers)
         // GeneratedPluginRegistrant.register(with: self)
