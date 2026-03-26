@@ -64,8 +64,42 @@ Java_com_antigravity_ndi_1player_1app_NDIView_captureFrameToBitmap(JNIEnv* env, 
         if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) return 0;
         if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0) return 0;
         
-        // Copy pixel data from NDI to Bitmap (BGRX compatible with BGRA8888 in some contexts)
-        memcpy(pixels, video_frame.p_data, video_frame.yres * video_frame.line_stride_in_bytes);
+        const int width  = video_frame.xres;
+        const int height = video_frame.yres;
+        const int stride = video_frame.line_stride_in_bytes;
+        const uint8_t* src = video_frame.p_data;
+        uint32_t* dst = (uint32_t*)pixels;
+        
+        // ✅ YUV → BGRA conversion si nécessaire (NDI peut retourner UYVY ou P216)
+        if (video_frame.FourCC == NDIlib_FourCC_video_type_UYVY) {
+            // UYVY packed format → BGRA8888
+            for (int y = 0; y < height; y++) {
+                const uint8_t* row = src + y * stride;
+                for (int x = 0; x < width; x += 2) {
+                    uint8_t u  = row[2*x];
+                    uint8_t y0 = row[2*x+1];
+                    uint8_t v  = row[2*x+2];
+                    uint8_t y1 = row[2*x+3];
+                    
+                    // YUV → RGB (BT.601)
+                    auto yuv2rgb = [](uint8_t Y, uint8_t U, uint8_t V, uint8_t& r, uint8_t& g, uint8_t& b) {
+                        int c = Y - 16, d = U - 128, e = V - 128;
+                        r = (uint8_t)std::max(0, std::min(255, (298*c + 409*e + 128) >> 8));
+                        g = (uint8_t)std::max(0, std::min(255, (298*c - 100*d - 208*e + 128) >> 8));
+                        b = (uint8_t)std::max(0, std::min(255, (298*c + 516*d + 128) >> 8));
+                    };
+                    
+                    uint8_t r0, g0, b0, r1, g1, b1;
+                    yuv2rgb(y0, u, v, r0, g0, b0);
+                    yuv2rgb(y1, u, v, r1, g1, b1);
+                    dst[y * width + x]     = (0xFF << 24) | (r0 << 16) | (g0 << 8) | b0;
+                    dst[y * width + x + 1] = (0xFF << 24) | (r1 << 16) | (g1 << 8) | b1;
+                }
+            }
+        } else {
+            // BGRX/BGRA direct copy (format natif NDI sur iOS/Android)
+            memcpy(pixels, src, height * stride);
+        }
         
         AndroidBitmap_unlockPixels(env, bitmap);
         NDIlib_recv_free_video_v2(recv, &video_frame);

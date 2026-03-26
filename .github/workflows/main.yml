@@ -17,8 +17,24 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
 
+      - name: Backup_Custom_Files
+        run: |
+          # ✅ Backup our custom project files BEFORE flutter create overwrites them
+          cp pubspec.yaml pubspec.yaml.bak
+          cp lib/main.dart lib/main.dart.bak
+          cp -r ios/Runner ios/Runner.bak
+          cp -r android/app/src/main android/app/src/main.bak
+
       - name: Create_Project
         run: flutter create --project-name=mimo_ndi --platforms=ios,android .
+
+      - name: Restore_Custom_Files
+        run: |
+          # ✅ Restore all our custom files after flutter create
+          cp pubspec.yaml.bak pubspec.yaml
+          cp lib/main.dart.bak lib/main.dart
+          cp -r ios/Runner.bak/. ios/Runner/
+          cp -r android/app/src/main.bak/. android/app/src/main/
 
       - name: Fetch_NDI
         run: |
@@ -58,7 +74,6 @@ jobs:
 
       - name: Build_Android
         run: |
-          # Le build Android va compiler native-lib.cpp avec libndi.so déjà présent dans jniLibs
           flutter build apk --release --obfuscate --split-debug-info=build/app/outputs/symbols
 
       - name: Upload_iOS
