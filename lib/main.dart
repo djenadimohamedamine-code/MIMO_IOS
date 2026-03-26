@@ -260,11 +260,17 @@ class _NdiReceiveScreenState extends State<NdiReceiveScreen> {
                       color: Colors.white54)),
               widget.isScanning
                   ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child:
-                          CircularProgressIndicator(strokeWidth: 2))
-                  : const SizedBox(width: 20, height: 20),
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.blueAccent))
+                  : IconButton(
+                      icon: const Icon(Icons.refresh,
+                          size: 20, color: Colors.blueAccent),
+                      onPressed: widget.onRefresh,
+                      tooltip: "Actualiser la liste",
+                    ),
+
             ],
           ),
         ),
