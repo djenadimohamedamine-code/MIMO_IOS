@@ -6,9 +6,20 @@ import 'dart:async';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  
+  // ✅ Demande des permissions critiques au démarrage pour Android
+  if (Platform.isAndroid) {
+    await [
+      Permission.camera,
+      Permission.microphone,
+      Permission.storage,
+      Permission.photos,
+    ].request();
+  }
+  
   runApp(const MimoNdiApp());
 }
 
