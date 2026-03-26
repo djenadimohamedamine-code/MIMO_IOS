@@ -44,7 +44,8 @@ Java_com_antigravity_ndi_1player_1app_NdiView_createReceiver(JNIEnv* env, jobjec
     const char* native_name = env->GetStringUTFChars(sourceName, nullptr);
     NDIlib_recv_create_v3_t recv_create;
     recv_create.source_to_connect_to.p_ndi_name = native_name;
-    recv_create.color_format = NDIlib_recv_color_format_BGRX_BGRA;
+    // Switch back to "Fastest" which is UYVY 4:2:2. It's more CPU efficient for conversion.
+    recv_create.color_format = NDIlib_recv_color_format_fastest; 
     recv_create.bandwidth = isLowBandwidth ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest;
     recv_create.allow_video_fields = false;
     
@@ -58,14 +59,12 @@ Java_com_antigravity_ndi_1player_1app_NdiView_destroyReceiver(JNIEnv* env, jobje
     if (p_instance) NDIlib_recv_destroy((NDIlib_recv_instance_t)p_instance);
 }
 
-// Helper to get resolution for dynamic resizing in Kotlin
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_antigravity_ndi_1player_1app_NdiView_getFrameResolution(JNIEnv* env, jobject /* this */, jlong p_instance) {
     int res[2] = {0, 0};
     if (p_instance) {
         NDIlib_recv_instance_t recv = (NDIlib_recv_instance_t)p_instance;
         NDIlib_video_frame_v2_t video_frame;
-        // Capture with very low timeout just to peek resolution
         if (NDIlib_recv_capture_v2(recv, &video_frame, nullptr, nullptr, 100) == NDIlib_frame_type_video) {
             res[0] = video_frame.xres;
             res[1] = video_frame.yres;
@@ -94,9 +93,7 @@ Java_com_antigravity_ndi_1player_1app_NdiView_captureFrameToBitmap(JNIEnv* env, 
             return 0;
         }
 
-        // Return -1 for Resolution Mismatch! (Signal for Kotlin to resize)
         if (video_frame.xres != (int)info.width || video_frame.yres != (int)info.height) {
-            LOGD("Resolution mismatch! Src:%dx%d vs Bitmap:%dx%d", video_frame.xres, video_frame.yres, (int)info.width, (int)info.height);
             NDIlib_recv_free_video_v2(recv, &video_frame);
             return -1; 
         }
@@ -115,27 +112,32 @@ Java_com_antigravity_ndi_1player_1app_NdiView_captureFrameToBitmap(JNIEnv* env, 
         
         bool success = false;
         
-        // Format Support: UYVY (Normal), RGBA/BGRA (Proxy/Alpha)
+        // IMPROVED YUV -> RGB conversion (BT.601)
         if (video_frame.FourCC == NDIlib_FourCC_video_type_UYVY) {
             for (int y = 0; y < height; y++) {
                 const uint8_t* src_row = src_ptr + y * src_stride;
                 uint32_t* dst_row = (uint32_t*)((uint8_t*)dst_ptr + y * dst_stride);
+                
                 for (int x = 0; x < width - 1; x += 2) {
-                    uint8_t u  = src_row[2*x];
-                    uint8_t y0 = src_row[2*x+1];
-                    uint8_t v  = src_row[2*x+2];
-                    uint8_t y1 = src_row[2*x+3];
-                    auto yuv2rgb = [](uint8_t Y, uint8_t U, uint8_t V, uint8_t& r, uint8_t& g, uint8_t& b) {
-                        int c = Y - 16, d = U - 128, e = V - 128;
-                        r = (uint8_t)std::max(0, std::min(255, (298*c + 409*e + 128) >> 8));
-                        g = (uint8_t)std::max(0, std::min(255, (298*c - 100*d - 208*e + 128) >> 8));
-                        b = (uint8_t)std::max(0, std::min(255, (298*c + 516*d + 128) >> 8));
-                    };
-                    uint8_t r0, g0, b0, r1, g1, b1;
-                    yuv2rgb(y0, u, v, r0, g0, b0);
-                    yuv2rgb(y1, u, v, r1, g1, b1);
-                    dst_row[x]     = (0xFF << 24) | (r0 << 16) | (g0 << 8) | b0;
-                    dst_row[x + 1] = (0xFF << 24) | (r1 << 16) | (g1 << 8) | b1;
+                    // UYVY order: Byte 0:U, Byte 1:Y0, Byte 2:V, Byte 3:Y1
+                    int u = (int)src_row[2*x] - 128;
+                    int y0 = (int)src_row[2*x+1] - 16;
+                    int v = (int)src_row[2*x+2] - 128;
+                    int y1 = (int)src_row[2*x+3] - 16;
+                    
+                    // Standard BT.601 Coefficients
+                    auto clamp = [](int v) -> uint8_t { return (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v)); };
+                    
+                    int r0 = (298 * y0 + 409 * v + 128) >> 8;
+                    int g0 = (298 * y0 - 100 * u - 208 * v + 128) >> 8;
+                    int b0 = (298 * y0 + 516 * u + 128) >> 8;
+                    
+                    int r1 = (298 * y1 + 409 * v + 128) >> 8;
+                    int g1 = (298 * y1 - 100 * u - 208 * v + 128) >> 8;
+                    int b1 = (298 * y1 + 516 * u + 128) >> 8;
+                    
+                    dst_row[x]     = (0xFF << 24) | (clamp(r0) << 16) | (clamp(g0) << 8) | clamp(b0);
+                    dst_row[x + 1] = (0xFF << 24) | (clamp(r1) << 16) | (clamp(g1) << 8) | clamp(b1);
                 }
             }
             success = true;
