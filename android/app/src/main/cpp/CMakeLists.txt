@@ -8,14 +8,13 @@ include_directories(include)
 add_library(${CMAKE_PROJECT_NAME} SHARED
         native-lib.cpp)
 
-# Use NDI library from jniLibs (Specific to the ABI during build)
-find_library(ndi_lib
-        ndi
-        PATHS ${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}
-        NO_DEFAULT_PATH)
+# Import NDI prebuilt shared library (official CMake way for prebuilt .so)
+add_library(ndi SHARED IMPORTED)
+set_target_properties(ndi PROPERTIES
+        IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}/libndi.so)
 
 target_link_libraries(${CMAKE_PROJECT_NAME}
         android
         log
-        jnigraphics # Essential for Bitmap handling (Preview/NDI)
-        ${ndi_lib})
+        jnigraphics
+        ndi)
