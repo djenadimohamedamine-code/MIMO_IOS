@@ -18,7 +18,7 @@ jobs:
           channel: 'stable'
 
       - name: Create_Project
-        run: flutter create --project-name=mimo_ndi --platforms=ios .
+        run: flutter create --project-name=mimo_ndi --platforms=ios,android .
 
       - name: Fetch_NDI
         run: |
@@ -34,7 +34,7 @@ jobs:
 
       - name: Deps
         run: |
-          flutter config --enable-ios
+          flutter config --enable-ios --enable-android
           flutter pub get
 
       - name: Xcode_Config
@@ -48,7 +48,7 @@ jobs:
           cd ios
           pod install --repo-update
 
-      - name: Build
+      - name: Build_iOS
         run: |
           flutter build ios --release --no-codesign --verbose
           cd build/ios/iphoneos
@@ -56,8 +56,19 @@ jobs:
           cp -r Runner.app Payload/
           zip -r MIMO_NDI.ipa Payload
 
-      - name: Upload
+      - name: Build_Android
+        run: |
+          # Le build Android va compiler native-lib.cpp avec libndi.so déjà présent dans jniLibs
+          flutter build apk --release --obfuscate --split-debug-info=build/app/outputs/symbols
+
+      - name: Upload_iOS
         uses: actions/upload-artifact@v4
         with:
           name: mimo-ndi-ipa
           path: build/ios/iphoneos/MIMO_NDI.ipa
+
+      - name: Upload_Android
+        uses: actions/upload-artifact@v4
+        with:
+          name: mimo-ndi-apk
+          path: build/app/outputs/flutter-apk/app-release.apk

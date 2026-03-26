@@ -8,33 +8,36 @@ import io.flutter.plugin.common.StandardMessageCodec
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.antigravity/ndi"
 
-    init {
-        System.loadLibrary("mimo_ndi_native")
+    companion object {
+        init {
+            System.loadLibrary("mimo_ndi_native")
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // Register the View Factory for Android NDI View
+        // Register the View Factories
         flutterEngine.platformViewsController.registry.registerViewFactory(
             "ndi-view", NdiViewFactory()
+        )
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            "ndi-camera-preview", NdiCameraPreviewFactory()
         )
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "getSources" -> {
-                    // Call the native NDI scanner (from LibNDI)
                     val sources = getNativeSources()
                     result.success(sources)
                 }
-                "connectToSource" -> {
-                    val name = call.argument<String>("name")
-                    if (name != null) {
-                        connectToNativeSource(name)
-                        result.success(true)
-                    } else {
-                        result.error("INVALID_ARG", "Source name is null", null)
-                    }
+                "startSend" -> {
+                    val name = call.argument<String>("name") ?: "MIMO_NDI Camera"
+                    // NDIManager handles send logic (To be implemented or JNI call)
+                    result.success(true)
+                }
+                "stopSend" -> {
+                    result.success(true)
                 }
                 else -> {
                     result.notImplemented()
@@ -43,7 +46,6 @@ class MainActivity: FlutterActivity() {
         }
     }
 
-    // These call the C++ JNI bridge (native-lib.cpp)
+    // JNI Calls
     private external fun getNativeSources(): List<String>
-    private external fun connectToNativeSource(name: String)
 }

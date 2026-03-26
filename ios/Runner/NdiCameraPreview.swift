@@ -10,24 +10,66 @@ class NdiCameraPreviewFactory: NSObject, FlutterPlatformViewFactory {
 }
 
 class NdiCameraPreview: NSObject, FlutterPlatformView {
-    private var _view: UIView
-    private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var previewView: CameraPreviewView
 
     init(frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?) {
-        _view = UIView(frame: frame)
-        _view.backgroundColor = .black
+        self.previewView = CameraPreviewView(frame: frame)
         super.init()
+    }
+
+    func view() -> UIView { return previewView }
+}
+
+// ✅ Classe dédiée pour gérer le redimensionnement automatique (Rotation iPhone)
+class CameraPreviewView: UIView {
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        self.backgroundColor = .black
         setupPreview()
     }
 
-    func view() -> UIView { return _view }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     private func setupPreview() {
         guard let session = NDIManager.shared.getCaptureSession() else { return }
         let layer = AVCaptureVideoPreviewLayer(session: session)
         layer.videoGravity = .resizeAspectFill
-        layer.frame = _view.bounds
-        _view.layer.addSublayer(layer)
+        layer.frame = self.bounds
+        self.layer.addSublayer(layer)
         self.previewLayer = layer
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // ✅ Ajuste le calque vidéo dès que l'iPhone tourne ou change de taille
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        previewLayer?.frame = self.bounds
+        
+        // ✅ Correction de l'orientation pour éviter que l'image reste en Portrait quand on tourne
+        if let connection = previewLayer?.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = self.currentVideoOrientation()
+        }
+        CATransaction.commit()
+    }
+
+    private func currentVideoOrientation() -> AVCaptureVideoOrientation {
+        // Détecte l'orientation actuelle de l'interface pour synchroniser le flux vidéo
+        let orientation: UIInterfaceOrientation
+        if #available(iOS 13.0, *) {
+            orientation = self.window?.windowScene?.interfaceOrientation ?? .portrait
+        } else {
+            orientation = UIApplication.shared.statusBarOrientation
+        }
+        
+        switch orientation {
+        case .portrait: return .portrait
+        case .landscapeLeft: return .landscapeLeft
+        case .landscapeRight: return .landscapeRight
+        case .portraitUpsideDown: return .portraitUpsideDown
+        default: return .portrait
+        }
     }
 }

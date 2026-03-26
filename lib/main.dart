@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'dart:async';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -493,12 +495,29 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
           Center(
             child: AspectRatio(
               aspectRatio: 16 / 9,
-              child: NdiNativeView(
-                key: ValueKey("${widget.sourceName}"), // On garde une clé simple, le channel gère le reste
-                sourceName: widget.sourceName,
-                quality: _quality,
-                muted: _isMuted,
-                onViewCreated: _onViewCreated,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Platform.isIOS
+                      ? UiKitView(
+                          viewType: 'ndi-view',
+                          creationParams: {
+                            'name': widget.sourceName,
+                            'quality': _quality,
+                            'muted': _isMuted,
+                          },
+                          creationParamsCodec: const StandardMessageCodec(),
+                          onPlatformViewCreated: _onViewCreated,
+                        )
+                      : AndroidView(
+                          viewType: 'ndi-view',
+                          creationParams: {
+                            'name': widget.sourceName,
+                            'quality': _quality,
+                            'muted': _isMuted,
+                          },
+                          creationParamsCodec: const StandardMessageCodec(),
+                          onPlatformViewCreated: _onViewCreated,
+                        ),
               ),
             ),
           ),
@@ -668,32 +687,35 @@ class _NdiSendScreenState extends State<NdiSendScreen> {
                 color: Colors.black,
                 child: Stack(
                   children: [
-                    // Vue caméra (UiKitView dédiée ou placeholder)
-                    Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.videocam,
-                              size: 80,
-                              color: _isSending
-                                  ? Colors.greenAccent
-                                  : Colors.white24),
-                          const SizedBox(height: 12),
-                          Text(
-                            _isSending
-                                ? '📡 EN DIRECT — NDI'
-                                : 'Caméra prête',
-                            style: TextStyle(
-                              color: _isSending
-                                  ? Colors.greenAccent
-                                  : Colors.white38,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
+                    // ✅ VUE CAMÉRA RÉELLE (Preview Local)
+                    Positioned.fill(
+                      child: Platform.isIOS
+                          ? const UiKitView(
+                              viewType: 'ndi-camera-preview',
+                              creationParamsCodec: StandardMessageCodec(),
+                            )
+                          : const AndroidView(
+                              viewType: 'ndi-camera-preview',
+                              creationParamsCodec: StandardMessageCodec(),
+                            ),
+                    ),
+                    // Calque d'état si non live
+                    if (!_isSending)
+                      Positioned.fill(
+                        child: Container(
+                          color: Colors.black45,
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: const [
+                                Icon(Icons.videocam, size: 80, color: Colors.white24),
+                                SizedBox(height: 12),
+                                Text('Caméra prête', style: TextStyle(color: Colors.white38, fontSize: 16, fontWeight: FontWeight.bold)),
+                              ],
                             ),
                           ),
-                        ],
+                        ),
                       ),
-                    ),
                     // Indicateur LIVE
                     if (_isSending)
                       Positioned(

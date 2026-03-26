@@ -108,6 +108,14 @@ class NDIManager: NSObject {
 
 extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        // ✅ On s'assure que le flux NDI tourne aussi si l'iPhone tourne
+        if connection.isVideoOrientationSupported {
+            let current = currentOrientation()
+            if connection.videoOrientation != current {
+                connection.videoOrientation = current
+            }
+        }
+        
         guard let send = sendInstance, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
@@ -124,5 +132,23 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         videoFrame.line_stride_in_bytes = Int32(stride)
         videoFrame.p_data = data?.bindMemory(to: UInt8.self, capacity: stride * height)
         NDIlib_send_send_video_v2(send, &videoFrame)
+    }
+    
+    private func currentOrientation() -> AVCaptureVideoOrientation {
+        let orientation: UIInterfaceOrientation
+        if #available(iOS 13.0, *) {
+            // Sur iOS 13+, on récupère l'orientation de la scène active (plus précis que UIDevice)
+            orientation = UIApplication.shared.windows.first { $0.isKeyWindow }?.windowScene?.interfaceOrientation ?? .portrait
+        } else {
+            orientation = UIApplication.shared.statusBarOrientation
+        }
+        
+        switch orientation {
+        case .portrait: return .portrait
+        case .landscapeLeft: return .landscapeLeft
+        case .landscapeRight: return .landscapeRight
+        case .portraitUpsideDown: return .portraitUpsideDown
+        default: return .portrait
+        }
     }
 }
