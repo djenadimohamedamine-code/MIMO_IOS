@@ -601,12 +601,7 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Column(
                     children: [
-                      // Indicateur de flux (Status DT)
-                      const Text(
-                        "MODE: PROXY (480p) | REC: 500kbps | AUTO-HEAL ON",
-                        style: TextStyle(fontSize: 9, color: Colors.white60, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
+
                       // SETTINGS
                       GestureDetector(
                         onTap: _showQualityMenu,
