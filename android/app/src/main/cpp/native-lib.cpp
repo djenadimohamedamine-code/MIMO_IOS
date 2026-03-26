@@ -35,7 +35,6 @@ Java_com_antigravity_ndi_1player_1app_MainActivity_getNativeSources(JNIEnv* env,
     return listObj;
 }
 
-// Fixed case sensitivity: NdiView (Kotlin) needs NdiView (JNI)
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_antigravity_ndi_1player_1app_NdiView_createReceiver(JNIEnv* env, jobject /* this */, jstring sourceName, jboolean isLowBandwidth) {
     if (!NDIlib_initialize()) {
@@ -59,26 +58,47 @@ Java_com_antigravity_ndi_1player_1app_NdiView_destroyReceiver(JNIEnv* env, jobje
     if (p_instance) NDIlib_recv_destroy((NDIlib_recv_instance_t)p_instance);
 }
 
+// Helper to get resolution for dynamic resizing in Kotlin
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_antigravity_ndi_1player_1app_NdiView_getFrameResolution(JNIEnv* env, jobject /* this */, jlong p_instance) {
+    int res[2] = {0, 0};
+    if (p_instance) {
+        NDIlib_recv_instance_t recv = (NDIlib_recv_instance_t)p_instance;
+        NDIlib_video_frame_v2_t video_frame;
+        // Capture with very low timeout just to peek resolution
+        if (NDIlib_recv_capture_v2(recv, &video_frame, nullptr, nullptr, 100) == NDIlib_frame_type_video) {
+            res[0] = video_frame.xres;
+            res[1] = video_frame.yres;
+            NDIlib_recv_free_video_v2(recv, &video_frame);
+        }
+    }
+    jintArray result = env->NewIntArray(2);
+    env->SetIntArrayRegion(result, 0, 2, res);
+    return result;
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_antigravity_ndi_1player_1app_NdiView_captureFrameToBitmap(JNIEnv* env, jobject /* this */, jlong p_instance, jobject bitmap) {
     if (!p_instance) return 0;
     NDIlib_recv_instance_t recv = (NDIlib_recv_instance_t)p_instance;
     NDIlib_video_frame_v2_t video_frame;
-    NDIlib_frame_type_e type = NDIlib_recv_capture_v2(recv, &video_frame, nullptr, nullptr, 16);
+    
+    NDIlib_frame_type_e type = NDIlib_recv_capture_v2(recv, &video_frame, nullptr, nullptr, 10);
     
     if (type == NDIlib_frame_type_video) {
         AndroidBitmapInfo info;
         void* pixels;
+        
         if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) {
             NDIlib_recv_free_video_v2(recv, &video_frame);
             return 0;
         }
 
-        // Safety Buffer Check: ensure received resolution fits in bitmap
-        if (video_frame.xres != info.width || video_frame.yres != info.height) {
-            // Resolution mismatch, don't copy as it will buffer overflow/crash
+        // Return -1 for Resolution Mismatch! (Signal for Kotlin to resize)
+        if (video_frame.xres != (int)info.width || video_frame.yres != (int)info.height) {
+            LOGD("Resolution mismatch! Src:%dx%d vs Bitmap:%dx%d", video_frame.xres, video_frame.yres, (int)info.width, (int)info.height);
             NDIlib_recv_free_video_v2(recv, &video_frame);
-            return 0;
+            return -1; 
         }
 
         if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0) {
@@ -88,43 +108,55 @@ Java_com_antigravity_ndi_1player_1app_NdiView_captureFrameToBitmap(JNIEnv* env, 
         
         const int width  = video_frame.xres;
         const int height = video_frame.yres;
-        const int stride = video_frame.line_stride_in_bytes;
-        const uint8_t* src = video_frame.p_data;
-        uint32_t* dst = (uint32_t*)pixels;
+        const int src_stride = video_frame.line_stride_in_bytes;
+        const uint8_t* src_ptr = video_frame.p_data;
+        const int dst_stride = info.stride;
+        uint32_t* dst_ptr = (uint32_t*)pixels;
         
-        // Check if NDI sends UYVY
+        bool success = false;
+        
+        // Format Support: UYVY (Normal), RGBA/BGRA (Proxy/Alpha)
         if (video_frame.FourCC == NDIlib_FourCC_video_type_UYVY) {
             for (int y = 0; y < height; y++) {
-                const uint8_t* row = src + y * stride;
+                const uint8_t* src_row = src_ptr + y * src_stride;
+                uint32_t* dst_row = (uint32_t*)((uint8_t*)dst_ptr + y * dst_stride);
                 for (int x = 0; x < width - 1; x += 2) {
-                    uint8_t u  = row[2*x];
-                    uint8_t y0 = row[2*x+1];
-                    uint8_t v  = row[2*x+2];
-                    uint8_t y1 = row[2*x+3];
-                    
+                    uint8_t u  = src_row[2*x];
+                    uint8_t y0 = src_row[2*x+1];
+                    uint8_t v  = src_row[2*x+2];
+                    uint8_t y1 = src_row[2*x+3];
                     auto yuv2rgb = [](uint8_t Y, uint8_t U, uint8_t V, uint8_t& r, uint8_t& g, uint8_t& b) {
                         int c = Y - 16, d = U - 128, e = V - 128;
                         r = (uint8_t)std::max(0, std::min(255, (298*c + 409*e + 128) >> 8));
                         g = (uint8_t)std::max(0, std::min(255, (298*c - 100*d - 208*e + 128) >> 8));
                         b = (uint8_t)std::max(0, std::min(255, (298*c + 516*d + 128) >> 8));
                     };
-                    
                     uint8_t r0, g0, b0, r1, g1, b1;
                     yuv2rgb(y0, u, v, r0, g0, b0);
                     yuv2rgb(y1, u, v, r1, g1, b1);
-                    dst[y * width + x]     = (0xFF << 24) | (r0 << 16) | (g0 << 8) | b0;
-                    dst[y * width + x + 1] = (0xFF << 24) | (r1 << 16) | (g1 << 8) | b1;
+                    dst_row[x]     = (0xFF << 24) | (r0 << 16) | (g0 << 8) | b0;
+                    dst_row[x + 1] = (0xFF << 24) | (r1 << 16) | (g1 << 8) | b1;
                 }
             }
-        } else {
-            // Assume compatible BGRA/BGRX or similar
-            memcpy(pixels, src, (size_t)height * (size_t)info.stride);
+            success = true;
+        } 
+        else if (video_frame.FourCC == NDIlib_FourCC_video_type_BGRA || 
+                 video_frame.FourCC == NDIlib_FourCC_video_type_BGRX ||
+                 video_frame.FourCC == NDIlib_FourCC_video_type_RGBA ||
+                 video_frame.FourCC == NDIlib_FourCC_video_type_RGBX) {
+            for (int y = 0; y < height; y++) {
+                memcpy((uint8_t*)dst_ptr + y * dst_stride, src_ptr + y * src_stride, width * 4);
+            }
+            success = true;
         }
         
         AndroidBitmap_unlockPixels(env, bitmap);
         NDIlib_recv_free_video_v2(recv, &video_frame);
-        return 1;
+        return success ? 1 : 0;
+    }
+    
+    if (type != NDIlib_frame_type_none) {
+        NDIlib_recv_free_video_v2(recv, &video_frame);
     }
     return 0;
 }
-

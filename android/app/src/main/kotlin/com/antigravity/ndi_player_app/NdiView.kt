@@ -9,10 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.TextureView
 import android.view.View
-import android.view.Surface
 import io.flutter.plugin.platform.PlatformView
-import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugin.common.StandardMessageCodec
 import android.util.Log
 
 class NdiView(context: Context, id: Int, private val creationParams: Map<String?, Any?>?) : PlatformView {
@@ -22,6 +19,7 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
     private var lastFrameTime: Long = System.currentTimeMillis()
     private var isRecovering = false
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val lock = Any() // Safety Lock for pInstance pointer
     
     // Quality settings
     private var currentQuality = creationParams?.get("quality") as? String ?: "480p"
@@ -30,13 +28,21 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
     init {
         textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, w: Int, h: Int) {
-                pInstance = createReceiver(sourceName, currentQuality == "480p")
+                synchronized(lock) {
+                    pInstance = createReceiver(sourceName, currentQuality == "480p")
+                    Log.d("NDIView", "Receiver initialisé (Ptr: $pInstance). Source: $sourceName")
+                }
                 startNativeReceiverLoop()
             }
             override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, w: Int, h: Int) {}
             override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
                 isRunning = false
-                destroyReceiver(pInstance)
+                synchronized(lock) {
+                    if (pInstance != 0L) {
+                        destroyReceiver(pInstance)
+                        pInstance = 0
+                    }
+                }
                 return true
             }
             override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) {}
@@ -47,32 +53,52 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
 
     override fun dispose() {
         isRunning = false
-        destroyReceiver(pInstance)
+        synchronized(lock) {
+            if (pInstance != 0L) {
+                destroyReceiver(pInstance)
+                pInstance = 0
+            }
+        }
     }
 
     private fun startNativeReceiverLoop() {
         Thread {
-            // Resolution-dependent Bitmap (Proxy uses small, Full uses large)
-            val w = if (currentQuality == "480p") 960 else 1920
-            val h = if (currentQuality == "480p") 540 else 1080
-            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            // Initialisation avec une taille par défaut (sera corrigée dès la 1ère frame)
+            var targetW = if (currentQuality == "480p") 960 else 1920
+            var targetH = if (currentQuality == "480p") 540 else 1080
+            var bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
             
+            Log.d("NDIView", "Boucle de capture démarrée en ${targetW}x${targetH}")
+
             while (isRunning) {
-                if (pInstance != 0L) {
-                    val captured = captureFrameToBitmap(pInstance, bitmap)
+                var ptr: Long = 0
+                synchronized(lock) { ptr = pInstance }
+
+                if (ptr != 0L) {
+                    // Tente de capturer la frame
+                    val captured = captureFrameToBitmap(ptr, bitmap)
+                    
                     if (captured == 1) {
                         lastFrameTime = System.currentTimeMillis()
                         drawToSurface(bitmap)
+                    } else if (captured == -1) {
+                        // 🛠️ RÉSOLUTION DYNAMIQUE : Le C++ signale une taille différente
+                        val res = getFrameResolution(ptr)
+                        if (res[0] > 0 && res[1] > 0 && (res[0] != targetW || res[1] != targetH)) {
+                            Log.w("NDIView", "⚡ Changement de résolution détecté : ${res[0]}x${res[1]} (Ancien: ${targetW}x${targetH})")
+                            targetW = res[0]
+                            targetH = res[1]
+                            bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+                            lastFrameTime = System.currentTimeMillis() // Reset du timeout car la source est active
+                        }
                     } else {
-                        // Heartbeat Auto-Healing (2 seconds timeout)
-                        if (System.currentTimeMillis() - lastFrameTime > 2000 && !isRecovering) {
+                        // Auto-Heal (Reconnexion si pas de frame pendant 3s)
+                        if (System.currentTimeMillis() - lastFrameTime > 3000 && !isRecovering) {
                             performAutoRecovery()
                         }
-                        Thread.sleep(10)
                     }
-                } else {
-                    Thread.sleep(100)
                 }
+                try { Thread.sleep(2) } catch (e: Exception) {}
             }
         }.start()
     }
@@ -80,20 +106,26 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
     private fun drawToSurface(bitmap: Bitmap) {
         val canvas: Canvas? = textureView.lockCanvas()
         if (canvas != null) {
-            canvas.drawBitmap(bitmap, null, android.graphics.Rect(0, 0, textureView.width, textureView.height), null)
-            textureView.unlockCanvasAndPost(canvas)
+            try {
+                // Dessine en adaptant à la taille du TextureView (Stretch/Scale)
+                canvas.drawBitmap(bitmap, null, android.graphics.Rect(0, 0, textureView.width, textureView.height), null)
+            } finally {
+                textureView.unlockCanvasAndPost(canvas)
+            }
         }
     }
 
     private fun performAutoRecovery() {
         if (isRecovering) return
         isRecovering = true
-        Log.d("NDIView", "⚠️ Auto-Recovery system triggered. Retrying connection...")
+        Log.w("NDIView", "⚠️ Signal perdu. Tentative de reconnexion auto...")
         
         mainHandler.post {
-            destroyReceiver(pInstance)
-            pInstance = createReceiver(sourceName, currentQuality == "480p")
-            lastFrameTime = System.currentTimeMillis()
+            synchronized(lock) {
+                if (pInstance != 0L) destroyReceiver(pInstance)
+                pInstance = createReceiver(sourceName, currentQuality == "480p")
+                lastFrameTime = System.currentTimeMillis()
+            }
             isRecovering = false
         }
     }
@@ -101,5 +133,6 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
     // JNI Native Methods
     private external fun createReceiver(name: String, lowBandwidth: Boolean): Long
     private external fun destroyReceiver(pInstance: Long)
+    private external fun getFrameResolution(pInstance: Long): IntArray
     private external fun captureFrameToBitmap(pInstance: Long, bitmap: Bitmap): Int
 }
