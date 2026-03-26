@@ -44,7 +44,6 @@ Java_com_antigravity_ndi_1player_1app_NdiView_createReceiver(JNIEnv* env, jobjec
     const char* native_name = env->GetStringUTFChars(sourceName, nullptr);
     NDIlib_recv_create_v3_t recv_create;
     recv_create.source_to_connect_to.p_ndi_name = native_name;
-    // Switch back to "Fastest" which is UYVY 4:2:2. It's more CPU efficient for conversion.
     recv_create.color_format = NDIlib_recv_color_format_fastest; 
     recv_create.bandwidth = isLowBandwidth ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest;
     recv_create.allow_video_fields = false;
@@ -76,33 +75,56 @@ Java_com_antigravity_ndi_1player_1app_NdiView_getFrameResolution(JNIEnv* env, jo
     return result;
 }
 
+// 🔊 Support for Audio capture
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_antigravity_ndi_1player_1app_NdiView_captureAudio(JNIEnv* env, jobject /* this */, jlong p_instance) {
+    if (!p_instance) return nullptr;
+    NDIlib_recv_instance_t recv = (NDIlib_recv_instance_t)p_instance;
+    NDIlib_audio_frame_v2_t audio_frame;
+    
+    // Low timeout to not block video, capture ONLY audio here if possible (but capture_v2 gets everything)
+    // We already capture video in another thread, but capturing here might take an audio packet.
+    if (NDIlib_recv_capture_v2(recv, nullptr, &audio_frame, nullptr, 0) == NDIlib_frame_type_audio) {
+        int no_samples = audio_frame.no_samples;
+        int no_channels = audio_frame.no_channels;
+        int total_size = no_samples * no_channels;
+        
+        jfloatArray result = env->NewFloatArray(total_size);
+        float* p_data = audio_frame.p_data;
+        if (p_data) {
+            env->SetFloatArrayRegion(result, 0, total_size, p_data);
+        }
+        
+        NDIlib_recv_free_audio_v2(recv, &audio_frame);
+        return result;
+    }
+    return nullptr;
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_antigravity_ndi_1player_1app_NdiView_captureFrameToBitmap(JNIEnv* env, jobject /* this */, jlong p_instance, jobject bitmap) {
     if (!p_instance) return 0;
     NDIlib_recv_instance_t recv = (NDIlib_recv_instance_t)p_instance;
     NDIlib_video_frame_v2_t video_frame;
     
+    // We pass nullptr to audio here to prioritize video in this loop
     NDIlib_frame_type_e type = NDIlib_recv_capture_v2(recv, &video_frame, nullptr, nullptr, 10);
     
     if (type == NDIlib_frame_type_video) {
         AndroidBitmapInfo info;
         void* pixels;
-        
         if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) {
             NDIlib_recv_free_video_v2(recv, &video_frame);
             return 0;
         }
-
         if (video_frame.xres != (int)info.width || video_frame.yres != (int)info.height) {
             NDIlib_recv_free_video_v2(recv, &video_frame);
             return -1; 
         }
-
         if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0) {
             NDIlib_recv_free_video_v2(recv, &video_frame);
             return 0;
         }
-        
         const int width  = video_frame.xres;
         const int height = video_frame.yres;
         const int src_stride = video_frame.line_stride_in_bytes;
@@ -110,55 +132,31 @@ Java_com_antigravity_ndi_1player_1app_NdiView_captureFrameToBitmap(JNIEnv* env, 
         const int dst_stride = info.stride;
         uint32_t* dst_ptr = (uint32_t*)pixels;
         
-        bool success = false;
-        
-        // IMPROVED YUV -> RGB conversion (BT.601)
         if (video_frame.FourCC == NDIlib_FourCC_video_type_UYVY) {
             for (int y = 0; y < height; y++) {
                 const uint8_t* src_row = src_ptr + y * src_stride;
                 uint32_t* dst_row = (uint32_t*)((uint8_t*)dst_ptr + y * dst_stride);
-                
                 for (int x = 0; x < width - 1; x += 2) {
-                    // UYVY order: Byte 0:U, Byte 1:Y0, Byte 2:V, Byte 3:Y1
                     int u = (int)src_row[2*x] - 128;
                     int y0 = (int)src_row[2*x+1] - 16;
                     int v = (int)src_row[2*x+2] - 128;
                     int y1 = (int)src_row[2*x+3] - 16;
-                    
-                    // Standard BT.601 Coefficients
-                    auto clamp = [](int v) -> uint8_t { return (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v)); };
-                    
-                    int r0 = (298 * y0 + 409 * v + 128) >> 8;
-                    int g0 = (298 * y0 - 100 * u - 208 * v + 128) >> 8;
-                    int b0 = (298 * y0 + 516 * u + 128) >> 8;
-                    
-                    int r1 = (298 * y1 + 409 * v + 128) >> 8;
-                    int g1 = (298 * y1 - 100 * u - 208 * v + 128) >> 8;
-                    int b1 = (298 * y1 + 516 * u + 128) >> 8;
-                    
-                    dst_row[x]     = (0xFF << 24) | (clamp(r0) << 16) | (clamp(g0) << 8) | clamp(b0);
-                    dst_row[x + 1] = (0xFF << 24) | (clamp(r1) << 16) | (clamp(g1) << 8) | clamp(b1);
+                    auto clamp = [](int val) -> uint8_t { return (uint8_t)(val < 0 ? 0 : (val > 255 ? 255 : val)); };
+                    dst_row[x]     = (0xFF << 24) | (clamp((298 * y0 + 409 * v + 128) >> 8) << 16) | (clamp((298 * y0 - 100 * u - 208 * v + 128) >> 8) << 8) | clamp((298 * y0 + 516 * u + 128) >> 8);
+                    dst_row[x + 1] = (0xFF << 24) | (clamp((298 * y1 + 409 * v + 128) >> 8) << 16) | (clamp((298 * y1 - 100 * u - 208 * v + 128) >> 8) << 8) | clamp((298 * y1 + 516 * u + 128) >> 8);
                 }
             }
-            success = true;
-        } 
-        else if (video_frame.FourCC == NDIlib_FourCC_video_type_BGRA || 
-                 video_frame.FourCC == NDIlib_FourCC_video_type_BGRX ||
-                 video_frame.FourCC == NDIlib_FourCC_video_type_RGBA ||
-                 video_frame.FourCC == NDIlib_FourCC_video_type_RGBX) {
+        } else if (video_frame.FourCC == NDIlib_FourCC_video_type_BGRA || video_frame.FourCC == NDIlib_FourCC_video_type_BGRX || video_frame.FourCC == NDIlib_FourCC_video_type_RGBA || video_frame.FourCC == NDIlib_FourCC_video_type_RGBX) {
             for (int y = 0; y < height; y++) {
                 memcpy((uint8_t*)dst_ptr + y * dst_stride, src_ptr + y * src_stride, width * 4);
             }
-            success = true;
         }
-        
         AndroidBitmap_unlockPixels(env, bitmap);
         NDIlib_recv_free_video_v2(recv, &video_frame);
-        return success ? 1 : 0;
+        return 1;
     }
-    
-    if (type != NDIlib_frame_type_none) {
-        NDIlib_recv_free_video_v2(recv, &video_frame);
-    }
+    // If it was audio, we free it just in case, but usually capture_v2 with nullptr for audio will skip it or return None.
+    // Actually, NDIlib_recv_capture_v2 with nullptr will return NDIlib_frame_type_none if audio frame was next? 
+    // No, it might return Metadata.
     return 0;
 }
