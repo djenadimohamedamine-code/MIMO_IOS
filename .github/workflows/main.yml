@@ -30,6 +30,10 @@ jobs:
           cp lib/main.dart lib/main.dart.bak
           cp -r ios/Runner ios/Runner.bak
           cp -r android/app/src/main android/app/src/main.bak
+          cp -r android/gradle/wrapper android/gradle/wrapper.bak
+          cp android/app/build.gradle android/app/build.gradle.bak
+          cp android/build.gradle android/build.gradle.bak
+          cp android/settings.gradle android/settings.gradle.bak
 
       - name: Create_Project
         run: flutter create --project-name=mimo_ndi --platforms=ios,android .
@@ -41,6 +45,10 @@ jobs:
           cp lib/main.dart.bak lib/main.dart
           cp -r ios/Runner.bak/. ios/Runner/
           cp -r android/app/src/main.bak/. android/app/src/main/
+          cp -r android/gradle/wrapper.bak/. android/gradle/wrapper/
+          cp android/app/build.gradle.bak android/app/build.gradle
+          cp android/build.gradle.bak android/build.gradle
+          cp android/settings.gradle.bak android/settings.gradle
 
       - name: Fetch_NDI
         run: |
