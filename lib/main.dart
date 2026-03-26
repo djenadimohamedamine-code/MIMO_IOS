@@ -251,9 +251,7 @@ class _NdiReceiveScreenState extends State<NdiReceiveScreen> {
                       height: 20,
                       child:
                           CircularProgressIndicator(strokeWidth: 2))
-                  : IconButton(
-                      onPressed: widget.onRefresh,
-                      icon: const Icon(Icons.refresh, size: 20)),
+                  : const SizedBox(width: 20, height: 20),
             ],
           ),
         ),
@@ -363,7 +361,7 @@ class NdiPlayerScreen extends StatefulWidget {
 
 class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
   MethodChannel? _viewChannel;
-  String _quality = "Lowest";
+  String _quality = "480p"; // ✅ Démarrage Forcé en 480p (Proxy)
   bool _isLandscape = true;
   bool _isMuted = false;
   bool _isRecording = false;
@@ -423,29 +421,33 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
   void _showQualityMenu() {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true, // ✅ Permet de contrôler la hauteur si besoin
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.92),
+          color: Colors.black.withOpacity(0.95),
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              margin: const EdgeInsets.symmetric(vertical: 10),
-              width: 40, height: 4,
-              decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
-            ),
-            const Padding(
-              padding: EdgeInsets.only(bottom: 16),
-              child: Text("Choix de la résolution", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            ),
-            _qualityOption("Highest", "1080p (Plein Débit HD)"),
-            _qualityOption("Medium", "720p (Équilibré)"),
-            _qualityOption("Lowest", "480p (Proxy - Ultra Stable)"),
-            const SizedBox(height: 20),
-          ],
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom + 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                margin: const EdgeInsets.symmetric(vertical: 10),
+                width: 40, height: 4,
+                decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+              ),
+              const Padding(
+                padding: EdgeInsets.only(bottom: 16),
+                child: Text("Choix de la résolution", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ),
+              _qualityOption("Highest", "1080p (Plein Débit HD)"),
+              _qualityOption("Medium", "720p (Équilibré)"),
+              _qualityOption("480p", "480p (Proxy - Ultra Stable)"), // ✅ On s'assure qu'il est là
+              const SizedBox(height: 30), // ✅ Plus d'espace en bas
+            ],
+          ),
         ),
       ),
     );
@@ -564,23 +566,17 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
                     child: Icon(_isMuted ? Icons.volume_off : Icons.volume_up, color: Colors.white, size: 24),
                   ),
                 ),
-                // ⚙️ + 🔄 Boutons Action (Refresh & Settings)
+                // ⚙️ Bouton Action (Settings)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    mainAxisSize: MainAxisSize.min,
+                  child: Column(
                     children: [
-                      // REFRESH
-                      GestureDetector(
-                        onTap: _refreshSources,
-                        child: Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(30)),
-                          child: const Icon(Icons.refresh, color: Colors.white, size: 24),
-                        ),
+                      // Indicateur de flux (Status DT)
+                      const Text(
+                        "MODE: PROXY (480p) | REC: 500kbps | AUTO-HEAL ON",
+                        style: TextStyle(fontSize: 9, color: Colors.white60, fontWeight: FontWeight.bold),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(height: 8),
                       // SETTINGS
                       GestureDetector(
                         onTap: _showQualityMenu,
@@ -942,7 +938,7 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
                     child: NdiNativeView(
                       key: ValueKey("mv_slot_${index}_$source"),
                       sourceName: source,
-                      quality: "Lowest", // ✅ On force la basse résolution en multiview
+                      quality: "480p", // ✅ On force la basse résolution en multiview
                       muted: true, // ✅ Et on coupe le son pour libérer le Wi-Fi
                     ),
                   )

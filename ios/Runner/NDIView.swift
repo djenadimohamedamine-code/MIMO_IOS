@@ -28,7 +28,12 @@ class NDIView: NSObject, FlutterPlatformView {
     private var recvInstance: NDIlib_recv_instance_t?
     private let receiveQueue = DispatchQueue(label: "ndi.receive.queue", qos: .userInteractive)
     private var currentSourceName: String?
-    private var currentQuality: String = "Lowest"
+    private var currentQuality: String = "480p"
+    
+    // Auto-Recovery (Auto-Healing)
+    private var lastCaptureTime: TimeInterval = CACurrentMediaTime()
+    private var isRecovering = false
+    private let recoveryQueue = DispatchQueue(label: "ndi.recovery.queue", qos: .background)
     
     // Rendering & Throttling
     private var lastFrameTime: TimeInterval = 0
@@ -99,12 +104,13 @@ class NDIView: NSObject, FlutterPlatformView {
     }
 
     private func refreshSources() {
+        print("🔄 Nettoyage du cache mDNS et recherche de nouvelles sources...")
         guard let find = NDIManager.shared.findInstance else { return }
-        // On force un rafraîchissement réseau léger (1s)
+        // On force un rafraîchissement réseau (1s) pour retrouver les caméras PTZ
         NDIlib_find_wait_for_sources(find, 1000)
         var noSources: UInt32 = 0
         let _ = NDIlib_find_get_current_sources(find, &noSources)
-        print("🔄 NDI Refresh: \(noSources) sources détectées.")
+        print("✅ Refresh terminé : \(noSources) sources détectées sur le plateau.")
     }
 
     private func setupAudioEngine() {
@@ -139,7 +145,7 @@ class NDIView: NSObject, FlutterPlatformView {
             guard let source = targetSource else { return }
             recvCreate.source_to_connect_to = source
             recvCreate.color_format = NDIlib_recv_color_format_BGRX_BGRA
-            recvCreate.bandwidth = (quality == "Lowest" || quality == "480p") ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest
+            recvCreate.bandwidth = (quality == "480p") ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest
             recvCreate.allow_video_fields = false
             self.recvInstance = NDIlib_recv_create_v3(&recvCreate)
         }
@@ -154,7 +160,9 @@ class NDIView: NSObject, FlutterPlatformView {
                     var a = NDIlib_audio_frame_v2_t()
                     var m = NDIlib_metadata_frame_t()
                     let type = NDIlib_recv_capture_v2(recv, &v, &a, &m, 16)
+                    
                     if type == NDIlib_frame_type_video {
+                        self.lastCaptureTime = CACurrentMediaTime()
                         let now = CACurrentMediaTime()
                         if now - self.lastFrameTime >= self.frameInterval {
                             self.lastFrameTime = now
@@ -163,15 +171,43 @@ class NDIView: NSObject, FlutterPlatformView {
                         var mutV = v
                         NDIlib_recv_free_video_v2(recv, &mutV)
                     } else if type == NDIlib_frame_type_audio {
+                        // Heartbeat based on audio too is safer
+                        self.lastCaptureTime = CACurrentMediaTime()
                         if !self.isMuted { self.playAudio(a) }
                         var mutA = a
                         NDIlib_recv_free_audio_v2(recv, &mutA)
                     } else if type == NDIlib_frame_type_metadata {
                         var mutM = m
                         NDIlib_recv_free_metadata(recv, &mutM)
-                    } else { usleep(4000) }
+                    } else {
+                        // Check for Auto-Recovery if no frame received
+                        if CACurrentMediaTime() - self.lastCaptureTime > 2.0 {
+                            self.performAutoRecovery()
+                        }
+                        usleep(4000)
+                    }
                 }
             }
+        }
+    }
+
+    private func performAutoRecovery() {
+        guard !isRecovering, let name = currentSourceName else { return }
+        isRecovering = true
+        print("⚠️ Flux NDI perdu (Heartbeat Timeout). Tentative de reconnexion automatique...")
+        
+        recoveryQueue.async { [weak self] in
+            guard let self = self else { return }
+            // Reset discovery manually to refresh network targets
+            self.refreshSources()
+            
+            // Restart receiver (Always keeping Proxy/Current quality priority)
+            self.startReceive(sourceName: name, quality: self.currentQuality)
+            
+            // Wait a bit before resetting flag to avoid recovery-loop
+            usleep(2000000) // 2s
+            self.lastCaptureTime = CACurrentMediaTime()
+            self.isRecovering = false
         }
     }
 
@@ -222,15 +258,16 @@ class NDIView: NSObject, FlutterPlatformView {
         try? FileManager.default.removeItem(at: url)
         do {
             assetWriter = try AVAssetWriter(outputURL: url, fileType: .mp4)
-            // RÉGLAGES ULTRA-LÉGERS (500 kbps) POUR STABILITÉ MAXIMALE
+            // RÉGLAGES PRO BROADCAST (500 kbps) POUR STABILITÉ MAXIMALE
             let settings: [String: Any] = [
                 AVVideoCodecKey: AVVideoCodecType.h264,
-                AVVideoWidthKey: 960,  // On peut baisser un peu la taille pour le proxy record
+                AVVideoWidthKey: 960,  // Résolution optimisée pour le monitoring
                 AVVideoHeightKey: 540,
                 AVVideoCompressionPropertiesKey: [
-                    AVVideoAverageBitRateKey: 500000, // 500 kbps
-                    AVVideoMaxKeyFrameIntervalKey: 30, // Structure stable
-                    AVVideoProfileLevelKey: AVVideoProfileLevelH264MainAutoLevel
+                    AVVideoAverageBitRateKey: 500000, // 500 kbps (Hard-limit)
+                    AVVideoMaxKeyFrameIntervalKey: 30, // Structure spatiale stable
+                    AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+                    AVVideoExpectedSourceFrameRateKey: 25 // Standard Broadcast
                 ]
             ]
             assetWriterInput = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
