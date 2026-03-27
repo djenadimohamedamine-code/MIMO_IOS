@@ -62,7 +62,7 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
         try {
             val minBufSize = AudioTrack.getMinBufferSize(48000, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_FLOAT)
             
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_INT_CODES.M) {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                 audioTrack = AudioTrack.Builder()
                     .setAudioAttributes(AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -80,20 +80,15 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
                 // Pre-Marshmallow fallback
                 @Suppress("DEPRECATION")
                 audioTrack = AudioTrack(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
-                        .build(),
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                        .setSampleRate(48000)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
-                        .build(),
+                    android.media.AudioManager.STREAM_MUSIC,
+                    48000,
+                    AudioFormat.CHANNEL_OUT_STEREO,
+                    AudioFormat.ENCODING_PCM_FLOAT,
                     minBufSize * 2,
-                    AudioTrack.MODE_STREAM,
-                    android.media.AudioManager.AUDIO_SESSION_ID_GENERATE
+                    AudioTrack.MODE_STREAM
                 )
             }
+
             audioTrack?.play()
             Log.d("NDIView", "AudioTrack initialized successfully.")
         } catch (e: Exception) {
