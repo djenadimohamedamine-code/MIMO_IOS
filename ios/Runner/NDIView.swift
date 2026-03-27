@@ -69,10 +69,11 @@ class NDIView: NSObject, FlutterPlatformView {
         _view = UIView(frame: frame)
         _view.backgroundColor = .black
         
-        // SETUP CALAYER FOR VIDEO (Faster than UIImageView)
+        // SETUP CALAYER FOR VIDEO
+        // Note: frame will be set properly in layoutSubviews, not here (bounds is zero at init)
         let layer = CALayer()
-        layer.frame = _view.bounds
         layer.contentsGravity = .resizeAspect
+        layer.backgroundColor = UIColor.black.cgColor
         _view.layer.addSublayer(layer)
         self.displayLayer = layer
         
@@ -121,7 +122,14 @@ class NDIView: NSObject, FlutterPlatformView {
         }
     }
 
-    func view() -> UIView { return _view }
+    func view() -> UIView { 
+        // Update layer frame every time the view is requested
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.displayLayer?.frame = self._view.bounds
+        }
+        return _view 
+    }
 
     private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
@@ -166,8 +174,9 @@ class NDIView: NSObject, FlutterPlatformView {
         
         do {
             let session = AVAudioSession.sharedInstance()
-            // PRO SETTINGS: playAndRecord + defaultToSpeaker for stability
-            try session.setCategory(.playAndRecord, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth])
+            // PLAYBACK ONLY - no microphone needed for NDI monitoring
+            // Using .playAndRecord causes immediate crash if microphone not permitted
+            try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
             try session.setActive(true)
             
             engine.prepare() 
