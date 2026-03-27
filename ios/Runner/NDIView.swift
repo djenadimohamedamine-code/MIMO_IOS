@@ -58,12 +58,6 @@ class NDIView: NSObject, FlutterPlatformView {
     private var startTime: CMTime?
     private let recordingQueue = DispatchQueue(label: "ndi.record.queue", qos: .utility)
 
-    // Jitter Buffer (Shield) - Tuned for minimum latency
-    private var videoBuffer: [CGImage] = []
-    private let targetBufferCount = 2  // 2 images = ~66ms latency
-    private let maxBufferSafety = 5    // Safety cap to avoid runaway lag
-    private var displayTimer: Timer?
-    private let bufferLock = NSLock()
 
     init(frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?, binaryMessenger messenger: FlutterBinaryMessenger?) {
         _view = UIView(frame: frame)
@@ -95,31 +89,7 @@ class NDIView: NSObject, FlutterPlatformView {
             }
         }
         
-        startDisplayTimer()
         startCaptureLoop()
-    }
-
-    private func startDisplayTimer() {
-        displayTimer = Timer.scheduledTimer(withTimeInterval: 0.033, repeats: true) { [weak self] _ in
-            self?.displayNextFrame()
-        }
-    }
-
-    private func displayNextFrame() {
-        bufferLock.lock()
-        guard !videoBuffer.isEmpty else { 
-            bufferLock.unlock()
-            return 
-        }
-        let nextFrame = videoBuffer.removeFirst()
-        bufferLock.unlock()
-        
-        DispatchQueue.main.async { [weak self] in
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            self?.displayLayer?.contents = nextFrame
-            CATransaction.commit()
-        }
     }
 
     func view() -> UIView { 
@@ -291,14 +261,15 @@ class NDIView: NSObject, FlutterPlatformView {
             )
             
             if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
-                // Shield Buffer: au lieu d'afficher, on stocke
-                bufferLock.lock()
-                // Si le réseau accélère trop, on vide le surplus pour rester à 0.2s
-                if videoBuffer.count > maxBufferSafety {
-                    videoBuffer.removeFirst(videoBuffer.count - targetBufferCount)
+                // ZERO LATENCY: Render directly to CALayer, no buffer
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    CATransaction.begin()
+                    CATransaction.setDisableActions(true)
+                    self.displayLayer?.frame = self._view.bounds
+                    self.displayLayer?.contents = cgImage
+                    CATransaction.commit()
                 }
-                videoBuffer.append(cgImage)
-                bufferLock.unlock()
                 
                 if isRecording {
                     recordingQueue.async { [weak self] in 
@@ -408,12 +379,6 @@ class NDIView: NSObject, FlutterPlatformView {
 
     deinit {
         isRunning = false
-        displayTimer?.invalidate()
-        displayTimer = nil
-        bufferLock.lock()
-        videoBuffer.removeAll()
-        bufferLock.unlock()
-        
         if isRecording { stopRecording() }
         playerNode?.stop()
         audioEngine?.stop()
