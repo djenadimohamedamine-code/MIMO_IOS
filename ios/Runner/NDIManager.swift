@@ -66,12 +66,14 @@ class NDIManager: NSObject {
     // ─────────────────────────────
     func startSend(sourceName: String) {
         if sendInstance != nil { stopSend() }
-        let nameBytes = sourceName.utf8CString
+        
         var sendCreate = NDIlib_send_create_t()
-        nameBytes.withUnsafeBufferPointer { ptr in
-            sendCreate.p_ndi_name = ptr.baseAddress
+        // Safety: Ensure string pointer persists during the create call
+        sourceName.withCString { pName in
+            sendCreate.p_ndi_name = pName
             sendInstance = NDIlib_send_create(&sendCreate)
         }
+        
         guard sendInstance != nil else { return }
         setupCamera()
     }
