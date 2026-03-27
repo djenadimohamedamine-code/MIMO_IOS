@@ -117,15 +117,26 @@ class NDIView: NSObject, FlutterPlatformView {
         audioEngine = AVAudioEngine()
         playerNode = AVAudioPlayerNode()
         guard let engine = audioEngine, let node = playerNode else { return }
+        
         engine.attach(node)
         audioFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)
-        if let format = audioFormat { engine.connect(node, to: engine.mainMixerNode, format: format) }
+        
+        if let format = audioFormat { 
+            engine.connect(node, to: engine.mainMixerNode, format: format) 
+        }
+        
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers, .duckOthers])
+            try session.setActive(true)
+            
+            engine.prepare() // Crucial: Prepare before starting
             try engine.start()
             node.play()
-        } catch { print("❌ Audio Error: \(error)") }
+            print("✅ Audio Engine Ready")
+        } catch { 
+            print("❌ Audio Session Error: \(error)") 
+        }
     }
 
     private func startReceive(sourceName: String, quality: String) {
@@ -246,30 +257,31 @@ class NDIView: NSObject, FlutterPlatformView {
     }
 
     private func playAudio(_ frame: NDIlib_audio_frame_v2_t) {
+        guard let engine = audioEngine, engine.isRunning,
+              let node = playerNode, node.isPlaying,
+              let format = audioFormat, !isMuted else { return }
+
         let noSamples = Int(frame.no_samples)
         let noChannels = Int(frame.no_channels)
-        guard let data = frame.p_data, noSamples > 0, 
-              let node = playerNode, 
-              let format = audioFormat,
-              node.isPlaying else { return }
+        guard let data = frame.p_data, noSamples > 0 else { return }
               
         autoreleasepool {
             guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(noSamples)) else { return }
             pcmBuffer.frameLength = AVAudioFrameCount(noSamples)
-            let channels = pcmBuffer.floatChannelData
             
             // 🛠️ CRITICAL FIX: Divide by 4 because pointer 'advanced(by:)' in Swift 
             // moves by [n * sizeof(Float)]. channel_stride_in_bytes is already in bytes.
             let floatStride = Int(frame.channel_stride_in_bytes) / 4
             
             for ch in 0..<min(noChannels, 2) {
-                if let dest = channels?[ch] { 
+                if let floatChannels = pcmBuffer.floatChannelData, let dest = floatChannels[ch] { 
                     // Move the pointer correctly using Float offset
                     let srcChannelData = data.advanced(by: ch * floatStride)
                     memcpy(dest, srcChannelData, noSamples * 4) 
                 }
             }
-            node.scheduleBuffer(pcmBuffer, at: nil, options: [], completionHandler: nil)
+            // Use .interruptable to avoid blocking if the stream saltates
+            node.scheduleBuffer(pcmBuffer, at: nil, options: .interruptableAtLoop, completionHandler: nil)
         }
     }
 
