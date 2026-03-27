@@ -7,6 +7,9 @@ import Flutter
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
+        // 🛡️ Install crash logger FIRST (before anything else)
+        CrashLogger.install()
+        
         let controller : FlutterViewController = window?.rootViewController as! FlutterViewController
         let ndiChannel = FlutterMethodChannel(name: "com.antigravity/ndi",
                                               binaryMessenger: controller.binaryMessenger)
@@ -42,8 +45,11 @@ import Flutter
         let cameraFactory = NdiCameraPreviewFactory()
         registrar?.register(cameraFactory, withId: "ndi-camera-preview")
         
-        // Note: super.application() automatically handles plugin registration
-        // via FlutterAppDelegate - no manual GeneratedPluginRegistrant call needed
-        return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+        let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+        
+        // 📋 Show last crash report if app crashed previously
+        CrashLogger.showLastCrashIfNeeded(in: controller)
+        
+        return result
     }
 }
