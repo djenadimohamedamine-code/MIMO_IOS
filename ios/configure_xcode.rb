@@ -8,9 +8,13 @@ begin
   # 1. Config Builder Settings
   target.build_configurations.each do |config|
     config.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = 'Runner/NDI-Bridging-Header.h'
-    config.build_settings['HEADER_SEARCH_PATHS'] = '$(inherited) $(PROJECT_DIR)/NDISDK/include'
+    # Include NDI headers AND Flutter's generated headers (for GeneratedPluginRegistrant.h)
+    config.build_settings['HEADER_SEARCH_PATHS'] = '$(inherited) $(PROJECT_DIR)/NDISDK/include $(SRCROOT)/Flutter'
     config.build_settings['LIBRARY_SEARCH_PATHS'] = '$(inherited) $(PROJECT_DIR)/NDISDK/lib'
     config.build_settings['ENABLE_BITCODE'] = 'NO'
+    # Never treat warnings as errors (fixes 3rd-party pod deprecation warnings)
+    config.build_settings['SWIFT_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
+    config.build_settings['GCC_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
     
     # 🚨 CRUCIAL : Définition statique pour que les headers NDI fonctionnent sur iOS
     defs = config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] || ['$(inherited)']

@@ -65,6 +65,7 @@ jobs:
       - name: Deps
         run: |
           flutter config --enable-ios --enable-android
+          flutter clean
           flutter pub get
 
       - name: Xcode_Config
@@ -80,7 +81,8 @@ jobs:
 
       - name: Build_iOS
         run: |
-          flutter build ios --release --no-codesign --verbose
+          flutter build ios --release --no-codesign --verbose \
+            --dart-define=FLUTTER_XCODE_SWIFT_TREAT_WARNINGS_AS_ERRORS=NO
           cd build/ios/iphoneos
           mkdir -p Payload
           cp -r Runner.app Payload/

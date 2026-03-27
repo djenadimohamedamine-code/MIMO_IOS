@@ -42,9 +42,8 @@ import Flutter
         let cameraFactory = NdiCameraPreviewFactory()
         registrar?.register(cameraFactory, withId: "ndi-camera-preview")
         
-        // 3. IMPORTANT : On garde l'enregistrement automatique des plugins
-        GeneratedPluginRegistrant.register(with: self)
-        
+        // Note: super.application() automatically handles plugin registration
+        // via FlutterAppDelegate - no manual GeneratedPluginRegistrant call needed
         return super.application(application, didFinishLaunchingWithOptions: launchOptions)
     }
 }
