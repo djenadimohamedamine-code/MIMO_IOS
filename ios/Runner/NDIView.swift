@@ -20,7 +20,7 @@ class NDIViewFactory: NSObject, FlutterPlatformViewFactory {
 
 class NDIView: NSObject, FlutterPlatformView {
     private var _view: UIView
-    private var imageView: UIImageView
+    private var displayLayer: CALayer?
     private var isRunning = true
     private var channel: FlutterMethodChannel?
     
@@ -38,7 +38,11 @@ class NDIView: NSObject, FlutterPlatformView {
     // Rendering & Throttling
     private var lastFrameTime: TimeInterval = 0
     private var frameInterval: TimeInterval = 0.033 // ~30 FPS
-    private let ciContext = CIContext(options: [.workingColorSpace: NSNull(), .useSoftwareRenderer: false])
+    private let ciContext = CIContext(options: [
+        .workingColorSpace: NSNull(),
+        .useSoftwareRenderer: false,
+        .cacheIntermediates: false // 🛠️ CRITICAL FIX: Pour vider la RAM immédiatement
+    ])
     
     // Audio Player
     private var audioEngine: AVAudioEngine?
@@ -54,13 +58,23 @@ class NDIView: NSObject, FlutterPlatformView {
     private var startTime: CMTime?
     private let recordingQueue = DispatchQueue(label: "ndi.record.queue", qos: .utility)
 
+    // Jitter Buffer (Shield)
+    private var videoBuffer: [CGImage] = []
+    private let targetBufferCount = 6  // 6 images de réserve (0.2s)
+    private let maxBufferSafety = 12   // On jette l'ancien si on dépasse
+    private var displayTimer: Timer?
+    private let bufferLock = NSLock()
+
     init(frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?, binaryMessenger messenger: FlutterBinaryMessenger?) {
         _view = UIView(frame: frame)
         _view.backgroundColor = .black
-        imageView = UIImageView(frame: frame)
-        imageView.contentMode = .scaleAspectFit
-        imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        _view.addSubview(imageView)
+        
+        // SETUP CALAYER FOR VIDEO (Faster than UIImageView)
+        let layer = CALayer()
+        layer.frame = _view.bounds
+        layer.contentsGravity = .resizeAspect
+        _view.layer.addSublayer(layer)
+        self.displayLayer = layer
         
         super.init()
         
@@ -79,7 +93,32 @@ class NDIView: NSObject, FlutterPlatformView {
                 self.startReceive(sourceName: name, quality: self.currentQuality)
             }
         }
+        
+        startDisplayTimer()
         startCaptureLoop()
+    }
+
+    private func startDisplayTimer() {
+        displayTimer = Timer.scheduledTimer(withTimeInterval: 0.033, repeats: true) { [weak self] _ in
+            self?.displayNextFrame()
+        }
+    }
+
+    private func displayNextFrame() {
+        bufferLock.lock()
+        guard !videoBuffer.isEmpty else { 
+            bufferLock.unlock()
+            return 
+        }
+        let nextFrame = videoBuffer.removeFirst()
+        bufferLock.unlock()
+        
+        DispatchQueue.main.async { [weak self] in
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            self?.displayLayer?.contents = nextFrame
+            CATransaction.commit()
+        }
     }
 
     func view() -> UIView { return _view }
@@ -113,6 +152,12 @@ class NDIView: NSObject, FlutterPlatformView {
         print("✅ Refresh terminé : \(noSources) sources détectées sur le plateau.")
     }
 
+    // Jitter Buffer (Shield)
+    private var videoBuffer: [CGImage] = []
+    private let maxBufferSize = 5 // ~165ms safety matress
+    private var displayTimer: Timer?
+    private let bufferLock = NSLock()
+
     private func setupAudioEngine() {
         audioEngine = AVAudioEngine()
         playerNode = AVAudioPlayerNode()
@@ -127,10 +172,11 @@ class NDIView: NSObject, FlutterPlatformView {
         
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers, .duckOthers])
+            // PRO SETTINGS: playAndRecord + defaultToSpeaker for stability
+            try session.setCategory(.playAndRecord, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth])
             try session.setActive(true)
             
-            engine.prepare() // Crucial: Prepare before starting
+            engine.prepare() 
             try engine.start()
             node.play()
             print("✅ Audio Engine Ready")
@@ -241,10 +287,14 @@ class NDIView: NSObject, FlutterPlatformView {
             )
             
             if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
-                let uiImage = UIImage(cgImage: cgImage)
-                DispatchQueue.main.async { [weak self] in 
-                    self?.imageView.image = uiImage 
+                // Shield Buffer: au lieu d'afficher, on stocke
+                bufferLock.lock()
+                // Si le réseau accélère trop, on vide le surplus pour rester à 0.2s
+                if videoBuffer.count > maxBufferSafety {
+                    videoBuffer.removeFirst(videoBuffer.count - targetBufferCount)
                 }
+                videoBuffer.append(cgImage)
+                bufferLock.unlock()
                 
                 if isRecording {
                     recordingQueue.async { [weak self] in 
@@ -354,6 +404,12 @@ class NDIView: NSObject, FlutterPlatformView {
 
     deinit {
         isRunning = false
+        displayTimer?.invalidate()
+        displayTimer = nil
+        bufferLock.lock()
+        videoBuffer.removeAll()
+        bufferLock.unlock()
+        
         if isRecording { stopRecording() }
         playerNode?.stop()
         audioEngine?.stop()
