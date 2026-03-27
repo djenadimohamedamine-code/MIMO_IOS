@@ -228,19 +228,18 @@ class NDIView: NSObject, FlutterPlatformView {
         let stride = Int(frame.line_stride_in_bytes)
         guard let p_data = frame.p_data else { return }
         
-        // Safety: Copy data to avoid accessing freed memory later
-        let data = Data(bytes: p_data, count: stride * height)
-        
-        let ciImage = CIImage(
-            bitmapData: data,
-            bytesPerRow: stride,
-            size: CGSize(width: width, height: height),
-            format: .BGRA8,
-            colorSpace: CGColorSpaceCreateDeviceRGB()
-        )
-        
-        // Optimization: Use autoreleasepool to clear intermediate CGImages
+        // AGGRESSIVE MEMORY CLEANUP: Move all objects inside the pool
         autoreleasepool {
+            let data = Data(bytes: p_data, count: stride * height)
+            
+            let ciImage = CIImage(
+                bitmapData: data,
+                bytesPerRow: stride,
+                size: CGSize(width: width, height: height),
+                format: .BGRA8,
+                colorSpace: CGColorSpaceCreateDeviceRGB()
+            )
+            
             if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
                 let uiImage = UIImage(cgImage: cgImage)
                 DispatchQueue.main.async { [weak self] in 
@@ -265,22 +264,19 @@ class NDIView: NSObject, FlutterPlatformView {
         let noChannels = Int(frame.no_channels)
         guard let data = frame.p_data, noSamples > 0 else { return }
               
+        // AGGRESSIVE MEMORY CLEANUP for Audio Buffers
         autoreleasepool {
             guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(noSamples)) else { return }
             pcmBuffer.frameLength = AVAudioFrameCount(noSamples)
             
-            // 🛠️ CRITICAL FIX: Divide by 4 because pointer 'advanced(by:)' in Swift 
-            // moves by [n * sizeof(Float)]. channel_stride_in_bytes is already in bytes.
             let floatStride = Int(frame.channel_stride_in_bytes) / 4
             
             for ch in 0..<min(noChannels, 2) {
                 if let floatChannels = pcmBuffer.floatChannelData, let dest = floatChannels[ch] { 
-                    // Move the pointer correctly using Float offset
                     let srcChannelData = data.advanced(by: ch * floatStride)
                     memcpy(dest, srcChannelData, noSamples * 4) 
                 }
             }
-            // Use .interruptable to avoid blocking if the stream saltates
             node.scheduleBuffer(pcmBuffer, at: nil, options: .interruptableAtLoop, completionHandler: nil)
         }
     }
