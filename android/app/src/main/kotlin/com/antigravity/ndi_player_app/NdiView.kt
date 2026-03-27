@@ -119,6 +119,7 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
                 
                 if (ptr != 0L) {
                     val floatData = captureAudio(ptr)
+                    // The JNI now always sends INTERLEAVED STEREO data
                     if (floatData != null && floatData.isNotEmpty()) {
                         audioTrack?.write(floatData, 0, floatData.size, AudioTrack.WRITE_BLOCKING)
                     } else {
