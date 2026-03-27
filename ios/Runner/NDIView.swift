@@ -278,7 +278,7 @@ class NDIView: NSObject, FlutterPlatformView {
                     memcpy(dest, srcChannelData, noSamples * 4) 
                 }
             }
-            node.scheduleBuffer(pcmBuffer, at: nil, options: .interruptableAtLoop, completionHandler: nil)
+            node.scheduleBuffer(pcmBuffer, at: nil, options: .interruptsAtLoop, completionHandler: nil)
         }
     }
 
