@@ -60,5 +60,10 @@
 		<string>Besoin d'accéder à la galerie pour sauvegarder vos captures NDI.</string>
 		<key>NSPhotoLibraryAddUsageDescription</key>
 		<string>Besoin d'enregistrer les vidéos NDI dans vos photos.</string>
+		<!-- CRASH LOG FILE SHARING (iTunes / Finder on Windows) -->
+		<key>UIFileSharingEnabled</key>
+		<true/>
+		<key>LSSupportsOpeningDocumentsInPlace</key>
+		<true/>
 	</dict>
 </plist>
