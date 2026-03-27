@@ -58,10 +58,10 @@ class NDIView: NSObject, FlutterPlatformView {
     private var startTime: CMTime?
     private let recordingQueue = DispatchQueue(label: "ndi.record.queue", qos: .utility)
 
-    // Jitter Buffer (Shield)
+    // Jitter Buffer (Shield) - Tuned for minimum latency
     private var videoBuffer: [CGImage] = []
-    private let targetBufferCount = 6  // 6 images de réserve (0.2s)
-    private let maxBufferSafety = 12   // On jette l'ancien si on dépasse
+    private let targetBufferCount = 2  // 2 images = ~66ms latency
+    private let maxBufferSafety = 5    // Safety cap to avoid runaway lag
     private var displayTimer: Timer?
     private let bufferLock = NSLock()
 
@@ -205,6 +205,7 @@ class NDIView: NSObject, FlutterPlatformView {
             guard let source = targetSource else { return }
             recvCreate.source_to_connect_to = source
             recvCreate.color_format = NDIlib_recv_color_format_BGRX_BGRA
+            // Always use highest bandwidth for best quality unless explicitly set to low
             recvCreate.bandwidth = (quality == "480p") ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest
             recvCreate.allow_video_fields = false
             self.recvInstance = NDIlib_recv_create_v3(&recvCreate)
