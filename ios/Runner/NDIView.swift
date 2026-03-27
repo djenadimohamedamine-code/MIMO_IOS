@@ -152,12 +152,6 @@ class NDIView: NSObject, FlutterPlatformView {
         print("✅ Refresh terminé : \(noSources) sources détectées sur le plateau.")
     }
 
-    // Jitter Buffer (Shield)
-    private var videoBuffer: [CGImage] = []
-    private let maxBufferSize = 5 // ~165ms safety matress
-    private var displayTimer: Timer?
-    private let bufferLock = NSLock()
-
     private func setupAudioEngine() {
         audioEngine = AVAudioEngine()
         playerNode = AVAudioPlayerNode()
