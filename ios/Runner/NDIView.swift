@@ -271,8 +271,9 @@ class NDIView: NSObject, FlutterPlatformView {
             
             let floatStride = Int(frame.channel_stride_in_bytes) / 4
             
-            for ch in 0..<min(noChannels, 2) {
-                if let floatChannels = pcmBuffer.floatChannelData, let dest = floatChannels[ch] { 
+            if let floatChannels = pcmBuffer.floatChannelData {
+                for ch in 0..<min(noChannels, 2) {
+                    let dest = floatChannels[ch]
                     let srcChannelData = data.advanced(by: ch * floatStride)
                     memcpy(dest, srcChannelData, noSamples * 4) 
                 }
