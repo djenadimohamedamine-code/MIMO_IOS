@@ -253,24 +253,26 @@ class NDIView: NSObject, FlutterPlatformView {
               let format = audioFormat,
               node.isPlaying else { return }
               
-        // Limit queue size to avoid OOM crash (max 10 buffers)
-        // In a real pro app, we'd use a circular buffer, but for stability 
-        // we just drop if the engine is too slow.
         autoreleasepool {
             guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(noSamples)) else { return }
             pcmBuffer.frameLength = AVAudioFrameCount(noSamples)
             let channels = pcmBuffer.floatChannelData
-            let channelStride = Int(frame.channel_stride_in_bytes)
+            
+            // 🛠️ CRITICAL FIX: Divide by 4 because pointer 'advanced(by:)' in Swift 
+            // moves by [n * sizeof(Float)]. channel_stride_in_bytes is already in bytes.
+            let floatStride = Int(frame.channel_stride_in_bytes) / 4
             
             for ch in 0..<min(noChannels, 2) {
                 if let dest = channels?[ch] { 
-                    let srcChannelData = data.advanced(by: ch * channelStride)
+                    // Move the pointer correctly using Float offset
+                    let srcChannelData = data.advanced(by: ch * floatStride)
                     memcpy(dest, srcChannelData, noSamples * 4) 
                 }
             }
             node.scheduleBuffer(pcmBuffer, at: nil, options: [], completionHandler: nil)
         }
     }
+
 
     // ─────────────────────────────
     // RECORDING LOGIC (OPTIMIZED 500k)
