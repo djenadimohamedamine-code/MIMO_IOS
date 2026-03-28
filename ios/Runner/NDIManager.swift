@@ -74,7 +74,9 @@ class NDIManager: NSObject {
         persistentSendName = strdup(sourceName)
         
         var sendCreate = NDIlib_send_create_t()
-        sendCreate.p_ndi_name = persistentSendName
+        if let namePtr = persistentSendName {
+            sendCreate.p_ndi_name = UnsafePointer(namePtr)
+        }
         sendInstance = NDIlib_send_create(&sendCreate)
         
         guard sendInstance != nil else { return }
