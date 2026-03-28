@@ -69,20 +69,31 @@ class NDIManager: NSObject {
         if sendInstance != nil { stopSend() }
         
         // 🛠️ CRITICAL FIX 1: NDI sender name pointer MUST persist indefinitely. 
-        // withCString destroys the string too early, causing an invisible ghost source on the network.
         if let oldName = persistentSendName { free(oldName) }
-        persistentSendName = strdup(sourceName)
+        
+        // 🚨 HUGE FIX: NDI requires STRICT UTF-8 pointer. If we just string, it might produce garbage.
+        if let utf8str = (sourceName as NSString).utf8String {
+            persistentSendName = strdup(utf8str)
+        }
         
         var sendCreate = NDIlib_send_create_t()
         if let namePtr = persistentSendName {
             sendCreate.p_ndi_name = UnsafePointer(namePtr)
         }
+        sendCreate.p_groups = nil
+        sendCreate.clock_video = false
+        sendCreate.clock_audio = false
+        
         sendInstance = NDIlib_send_create(&sendCreate)
         
-        guard sendInstance != nil else { return }
+        if sendInstance == nil {
+            print("❌ ERREUR FATALE NDI: Impossible de créer l'émetteur.")
+            return
+        }
+        
+        print("✅ NDI Sender démarré: \(String(cString: persistentSendName!))")
         
         // 🛠️ CRITICAL FIX 2: Never recreate the camera if it's already running!
-        // Doing so rips the camera away from the PreviewLayer and freezes the UI.
         if captureSession == nil {
             setupCamera()
         }

@@ -17,6 +17,14 @@ class NDIViewFactory: NSObject, FlutterPlatformViewFactory {
         return NDIView(frame: frame, viewIdentifier: viewId, arguments: args, binaryMessenger: messenger)
     }
 }
+// 🛠️ CRITICAL FIX FOR MULTIVIEW (OOM CRASH): 
+// We MUST share a single CIContext globally. If we open 4 NDI streams, 
+// creating 4 CIContexts will instantly exhaust the iPhone GPU memory and cause a Jetsam crash.
+private let sharedCIContext = CIContext(options: [
+    .workingColorSpace: NSNull(),
+    .useSoftwareRenderer: false,
+    .cacheIntermediates: false
+])
 
 class NDIView: NSObject, FlutterPlatformView {
     private var _view: UIView
@@ -38,11 +46,6 @@ class NDIView: NSObject, FlutterPlatformView {
     // Rendering & Throttling
     private var lastFrameTime: TimeInterval = 0
     private var frameInterval: TimeInterval = 0.033 // ~30 FPS
-    private let ciContext = CIContext(options: [
-        .workingColorSpace: NSNull(),
-        .useSoftwareRenderer: false,
-        .cacheIntermediates: false // 🛠️ CRITICAL FIX: Pour vider la RAM immédiatement
-    ])
     
     // Audio Player
     private var audioEngine: AVAudioEngine?
@@ -260,7 +263,7 @@ class NDIView: NSObject, FlutterPlatformView {
                 colorSpace: CGColorSpaceCreateDeviceRGB()
             )
             
-            if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
+            if let cgImage = sharedCIContext.createCGImage(ciImage, from: ciImage.extent) {
                 // ZERO LATENCY: Render directly to CALayer, no buffer
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
