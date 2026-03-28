@@ -142,12 +142,17 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         let data = CVPixelBufferGetBaseAddress(pixelBuffer)
         
         var videoFrame = NDIlib_video_frame_v2_t()
-        videoFrame.xres = Int32(width); videoFrame.yres = Int32(height)
-        videoFrame.FourCC = NDIlib_FourCC_type_BGRA
-        videoFrame.frame_rate_N = 30000; videoFrame.frame_rate_D = 1001
+        videoFrame.xres = Int32(width)
+        videoFrame.yres = Int32(height)
+        videoFrame.picture_aspect_ratio = Float(width) / Float(height)
+        videoFrame.FourCC = NDIlib_FourCC_video_type_BGRA
+        videoFrame.frame_rate_N = 30000
+        videoFrame.frame_rate_D = 1001
         videoFrame.frame_format_type = NDIlib_frame_format_type_progressive
+        videoFrame.timecode = Int64.max // NDIlib_send_timecode_synthesize = INT64_MAX
         videoFrame.line_stride_in_bytes = Int32(stride)
         videoFrame.p_data = data?.bindMemory(to: UInt8.self, capacity: stride * height)
+        
         NDIlib_send_send_video_v2(send, &videoFrame)
     }
     
