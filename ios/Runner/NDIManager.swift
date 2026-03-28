@@ -12,6 +12,7 @@ class NDIManager: NSObject {
     
     // NDI Send state (Camera)
     private var sendInstance: NDIlib_send_instance_t?
+    private var persistentSendName: UnsafeMutablePointer<CChar>?
     private var captureSession: AVCaptureSession?
     private var sendQueue = DispatchQueue(label: "ndi.send.queue", qos: .userInitiated)
     
@@ -67,20 +68,27 @@ class NDIManager: NSObject {
     func startSend(sourceName: String) {
         if sendInstance != nil { stopSend() }
         
+        // 🛠️ CRITICAL FIX 1: NDI sender name pointer MUST persist indefinitely. 
+        // withCString destroys the string too early, causing an invisible ghost source on the network.
+        if let oldName = persistentSendName { free(oldName) }
+        persistentSendName = strdup(sourceName)
+        
         var sendCreate = NDIlib_send_create_t()
-        // Safety: Ensure string pointer persists during the create call
-        sourceName.withCString { pName in
-            sendCreate.p_ndi_name = pName
-            sendInstance = NDIlib_send_create(&sendCreate)
-        }
+        sendCreate.p_ndi_name = persistentSendName
+        sendInstance = NDIlib_send_create(&sendCreate)
         
         guard sendInstance != nil else { return }
-        setupCamera()
+        
+        // 🛠️ CRITICAL FIX 2: Never recreate the camera if it's already running!
+        // Doing so rips the camera away from the PreviewLayer and freezes the UI.
+        if captureSession == nil {
+            setupCamera()
+        }
     }
     
     func stopSend() {
-        captureSession?.stopRunning()
-        captureSession = nil
+        // 🚨 Do NOT stop the captureSession here! 
+        // We want the screen preview to keep running smoothly even if we stop pushing to NDI.
         if let send = sendInstance {
             NDIlib_send_destroy(send)
             sendInstance = nil
