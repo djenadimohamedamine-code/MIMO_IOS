@@ -89,11 +89,16 @@ class NDIManager: NSObject {
     }
     
     func stopSend() {
-        // 🚨 Do NOT stop the captureSession here! 
-        // We want the screen preview to keep running smoothly even if we stop pushing to NDI.
-        if let send = sendInstance {
-            NDIlib_send_destroy(send)
-            sendInstance = nil
+        // 🚨 THREAD SAFETY FIX (SIGABRT CRASH):
+        // captureOutput is running continuously on `sendQueue`.
+        // We MUST destroy the sendInstance on the exact same queue so they don't collide in memory!
+        sendQueue.async { [weak self] in
+            guard let self = self else { return }
+            if let send = self.sendInstance {
+                self.sendInstance = nil
+                NDIlib_send_destroy(send)
+                print("✅ NDI Sender Destroyed Safely")
+            }
         }
     }
     
