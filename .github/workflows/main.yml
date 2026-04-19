@@ -27,7 +27,7 @@ jobs:
         run: |
           # ✅ Backup our custom project files BEFORE flutter create overwrites them
           cp pubspec.yaml pubspec.yaml.bak
-          cp lib/main.dart lib/main.dart.bak
+          cp -r lib lib.bak
           cp -r ios/Runner ios/Runner.bak
           cp -r android/app/src/main android/app/src/main.bak
           cp -r android/gradle/wrapper android/gradle/wrapper.bak
@@ -42,7 +42,7 @@ jobs:
         run: |
           # ✅ Restore all our custom files after flutter create
           cp pubspec.yaml.bak pubspec.yaml
-          cp lib/main.dart.bak lib/main.dart
+          cp -r lib.bak/. lib/
           cp -r ios/Runner.bak/. ios/Runner/
           cp -r android/app/src/main.bak/. android/app/src/main/
           cp -r android/gradle/wrapper.bak/. android/gradle/wrapper/
