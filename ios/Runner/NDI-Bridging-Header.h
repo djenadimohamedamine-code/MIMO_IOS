@@ -4,6 +4,9 @@
 // Define that we are linking statically (Required for iOS .a library)
 #define PROCESSINGNDILIB_STATIC 1
 
+// Import Flutter generated headers
+#import "GeneratedPluginRegistrant.h"
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wnullability-completeness"
 // Import the main NDI header (it includes all others: Find, Recv, Send, etc.)
