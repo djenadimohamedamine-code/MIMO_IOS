@@ -1,4 +1,4 @@
-import UIKit
+﻿import UIKit
 import Flutter
 
 @UIApplicationMain
@@ -7,47 +7,61 @@ import Flutter
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
-        // 🛡️ Install crash logger FIRST (before anything else)
         CrashLogger.install()
         
-        let controller : FlutterViewController = window?.rootViewController as! FlutterViewController
+        // 1´©ÅÔâú INITIALISATION R├ëSEAU/FLUTTER (Gemini Fix)
+        let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+        
+        // 2´©ÅÔâú R├ëCUP├ëRATION DU CONTROLLER (S├®curis├®e apr├¿s super.application)
+        guard let controller = window?.rootViewController as? FlutterViewController else {
+            return result
+        }
+        
+        // ­ƒöä Inscription des plugins Flutter de base
+        GeneratedPluginRegistrant.register(with: self)
+        
+        // ­ƒôí Setup Canal NDI
         let ndiChannel = FlutterMethodChannel(name: "com.antigravity/ndi",
                                               binaryMessenger: controller.binaryMessenger)
         
-        ndiChannel.setMethodCallHandler({
-            (call: FlutterMethodCall, result: @escaping FlutterResult) -> Void in
+        ndiChannel.setMethodCallHandler({ (call: FlutterMethodCall, result: @escaping FlutterResult) -> Void in
             if call.method == "getSources" {
-                let sources = NDIManager.shared.getSources()
-                result(sources)
+                result(NDIManager.shared.getSources())
             } else if call.method == "startSend" {
-                if let args = call.arguments as? [String: Any],
-                   let name = args["name"] as? String {
-                    NDIManager.shared.startSend(sourceName: name)
-                    result(true)
-                } else {
-                    NDIManager.shared.startSend(sourceName: "MIMO_NDI Camera")
-                    result(true)
-                }
+                let name = (call.arguments as? [String: Any])?["name"] as? String ?? "MIMO_NDI Camera"
+                NDIManager.shared.startSend(sourceName: name)
+                result(true)
             } else if call.method == "stopSend" {
                 NDIManager.shared.stopSend()
+                result(true)
+            } else if call.method == "startRelay" {
+                NDIManager.shared.startRelaySender()
+                result(true)
+            } else if call.method == "switchRelay" {
+                if let source = call.arguments as? String {
+                    NDIManager.shared.switchRelay(to: source)
+                    result(true)
+                } else { result(false) }
+            } else if call.method == "stopRelay" {
+                NDIManager.shared.stopRelay()
+                result(true)
+            } else if call.method == "setupCamera" {
+                NDIManager.shared.setupCamera()
                 result(true)
             } else {
                 result(FlutterMethodNotImplemented)
             }
         })
         
-        // Register NDI Native View (Récepteur)
+        // ­ƒº® Inscription des vues natives (Pattern Stable)
         let registrar = self.registrar(forPlugin: "NDIPlugin")
         let factory = NDIViewFactory(messenger: controller.binaryMessenger)
         registrar?.register(factory, withId: "ndi-view")
         
-        // Register Camera Preview (Émetteur)
-        let cameraFactory = NdiCameraPreviewFactory()
+        let cameraFactory = NdiCameraPreviewFactory(messenger: controller.binaryMessenger)
         registrar?.register(cameraFactory, withId: "ndi-camera-preview")
         
-        let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
-        
-        // 📋 Show last crash report if app crashed previously
+        // ­ƒôï Affichage du crash log si besoin
         CrashLogger.showLastCrashIfNeeded(in: controller)
         
         return result

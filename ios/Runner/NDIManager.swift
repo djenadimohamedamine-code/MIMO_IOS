@@ -4,42 +4,79 @@ import AVFoundation
 
 class NDIManager: NSObject {
     static let shared = NDIManager()
-    
+
     // Discovery (Finder)
-    var findInstance: NDIlib_find_instance_t?
+    private var findInstance: NDIlib_find_instance_t?
     private var cachedSources = [String]()
     private let discoveryQueue = DispatchQueue(label: "ndi.discovery.queue", qos: .background)
-    
+    private var currentExtraIps: String? // 🌐 IPs Tailscale/Distantes
+    let sourcesQueue = DispatchQueue(label: "ndi.sources.queue", qos: .userInteractive)
+
     // NDI Send state (Camera)
     private var sendInstance: NDIlib_send_instance_t?
     private var persistentSendName: UnsafeMutablePointer<CChar>?
     private var captureSession: AVCaptureSession?
-    private var sendQueue = DispatchQueue(label: "ndi.send.queue", qos: .userInitiated)
-    
+    private let captureQueue = DispatchQueue(label: "ndi.capture.queue", qos: .userInitiated)
+    private let sendQueue = DispatchQueue(label: "ndi.send.queue", qos: .userInitiated)
+    private(set) var currentCameraPosition: AVCaptureDevice.Position = .back
+
+    // 🎬 NDI RELAY SYSTEM (MIMO_NDI_SWITCH → TriCaster)
+    private var relaySendInstance: NDIlib_send_instance_t?
+    private var relayRecvInstance: NDIlib_recv_instance_t?
+    private let relayQueue = DispatchQueue(label: "ndi.relay.queue", qos: .userInteractive)
+    private var relayRunning = false
+    private var persistentRelaySendName: UnsafeMutablePointer<CChar>?
+    private(set) var isRelayActive = false
+
     override init() {
         super.init()
         if !NDIlib_initialize() { return }
-        
-        var findCreate = NDIlib_find_create_t()
-        findCreate.show_local_sources = true
-        findInstance = NDIlib_find_create_v2(&findCreate)
-        
-        // Démarrage de la découverte en tâche de fond (Loop infinie légère)
-        startBackgroundDiscovery()
-        print("✅ NDI Manager initialized (Background Discovery Started)")
+
+        // Audio Setup
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+            try session.setActive(true)
+        } catch {
+            print("❌ AVAudioSession FAIL: \(error)")
+        }
+
+        recreateFinder()
     }
-    
+
+    func setExtraIps(_ ips: String) {
+        if self.currentExtraIps == ips { return }
+        self.currentExtraIps = ips.isEmpty ? nil : ips
+        recreateFinder()
+    }
+
+    private func recreateFinder() {
+        discoveryQueue.sync {
+            if let old = self.findInstance {
+                NDIlib_find_destroy(old)
+                self.findInstance = nil
+            }
+            var findCreate = NDIlib_find_create_t()
+            findCreate.show_local_sources = true
+            if let extra = self.currentExtraIps {
+                findCreate.p_extra_ips = (extra as NSString).utf8String
+            }
+            self.findInstance = NDIlib_find_create_v2(&findCreate)
+        }
+        if !discoveryRunning { startBackgroundDiscovery() }
+    }
+
+    private var discoveryRunning = false
     private func startBackgroundDiscovery() {
+        guard !discoveryRunning else { return }
+        discoveryRunning = true
         discoveryQueue.async { [weak self] in
             while true {
-                guard let find = self?.findInstance else { break }
-                
-                // On attend les sources sans bloquer l'UI
+                guard let self = self else { break }
+                guard let find = self.findInstance else { sleep(1); continue }
                 NDIlib_find_wait_for_sources(find, 1000)
-                
                 var noSources: UInt32 = 0
                 let sources = NDIlib_find_get_current_sources(find, &noSources)
-                
                 var names = [String]()
                 if noSources > 0, let sources = sources {
                     for i in 0..<Int(noSources) {
@@ -47,70 +84,49 @@ class NDIManager: NSObject {
                         if !name.isEmpty { names.append(name) }
                     }
                 }
-                
-                // On met à jour le cache (thread-safe simple car lecture seule pour le reste)
-                self?.cachedSources = names
-                
-                // On dort un peu pour ne pas saturer le CPU
-                sleep(10)
+                self.cachedSources = names
+                usleep(500_000)
             }
         }
     }
-    
-    func getSources() -> [String] {
-        // Retourne IMMEDIATEMENT le cache (Zéro blocage d'UI)
-        return cachedSources
-    }
-    
-    // ─────────────────────────────
-    // SEND (Camera → NDI)
-    // ─────────────────────────────
+
+    func getSources() -> [String] { return cachedSources }
+
     func startSend(sourceName: String) {
         if sendInstance != nil { stopSend() }
-        
-        // 🛠️ CRITICAL FIX 1: NDI sender name pointer MUST persist indefinitely. 
-        // withCString destroys the string too early, causing an invisible ghost source on the network.
         if let oldName = persistentSendName { free(oldName) }
-        persistentSendName = strdup(sourceName)
-        
-        var sendCreate = NDIlib_send_create_t()
-        if let namePtr = persistentSendName {
-            sendCreate.p_ndi_name = UnsafePointer(namePtr)
+        if let utf8str = (sourceName as NSString).utf8String {
+            persistentSendName = strdup(utf8str)
         }
-        sendInstance = NDIlib_send_create(&sendCreate)
-        
-        guard sendInstance != nil else { return }
-        
-        // 🛠️ CRITICAL FIX 2: Never recreate the camera if it's already running!
-        // Doing so rips the camera away from the PreviewLayer and freezes the UI.
-        if captureSession == nil {
-            setupCamera()
+        sendQueue.async { [weak self] in
+            guard let self = self else { return }
+            var sendCreate = NDIlib_send_create_t()
+            if let namePtr = self.persistentSendName {
+                sendCreate.p_ndi_name = UnsafePointer(namePtr)
+            }
+            self.sendInstance = NDIlib_send_create(&sendCreate)
+            if self.captureSession == nil {
+                DispatchQueue.main.async { self.setupCamera() }
+            }
         }
     }
-    
+
     func stopSend() {
-        // 🚨 THREAD SAFETY FIX (SIGABRT CRASH):
-        // captureOutput is running continuously on `sendQueue`.
-        // We MUST destroy the sendInstance on the exact same queue so they don't collide in memory!
         sendQueue.async { [weak self] in
             guard let self = self else { return }
             if let send = self.sendInstance {
                 self.sendInstance = nil
                 NDIlib_send_destroy(send)
-                print("✅ NDI Sender Destroyed Safely")
             }
         }
     }
-    
-    func getCaptureSession() -> AVCaptureSession? {
-        if captureSession == nil { setupCamera() }
-        return captureSession
-    }
-    
-    private func setupCamera() {
+
+    func getCaptureSession() -> AVCaptureSession? { return captureSession }
+
+    func setupCamera(position: AVCaptureDevice.Position = .back) {
         let session = AVCaptureSession()
-        session.sessionPreset = .hd1280x720
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+        session.sessionPreset = .hd1280x720 // Stable for TriCaster (March 28)
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position),
               let input = try? AVCaptureDeviceInput(device: device) else { return }
         if session.canAddInput(input) { session.addInput(input) }
         let output = AVCaptureVideoDataOutput()
@@ -118,29 +134,106 @@ class NDIManager: NSObject {
         output.setSampleBufferDelegate(self, queue: sendQueue)
         output.alwaysDiscardsLateVideoFrames = true
         if session.canAddOutput(output) { session.addOutput(output) }
+
+        if let connection = output.connection(with: .video), connection.isVideoOrientationSupported {
+            connection.videoOrientation = self.currentOrientation()
+        }
+
         captureSession = session
-        sendQueue.async { session.startRunning() }
+        currentCameraPosition = position
+        session.startRunning()
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            NotificationCenter.default.post(name: NSNotification.Name("CameraReady"), object: nil)
+        }
+    }
+
+    func switchCamera(toFront: Bool) {
+        let newPosition: AVCaptureDevice.Position = toFront ? .front : .back
+        guard let session = captureSession,
+              let newDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition),
+              let newInput = try? AVCaptureDeviceInput(device: newDevice) else { return }
+        session.beginConfiguration()
+        session.inputs.forEach { session.removeInput($0) }
+        if session.canAddInput(newInput) { session.addInput(newInput) }
+        session.commitConfiguration()
+        currentCameraPosition = newPosition
+    }
+
+    // 🎬 RELAY SYSTEM
+    func startRelaySender() {
+        guard relaySendInstance == nil else { return }
+        if let utf8 = ("MIMO_NDI_SWITCH" as NSString).utf8String {
+            if let old = persistentRelaySendName { free(old) }
+            persistentRelaySendName = strdup(utf8)
+        }
+        var sendCreate = NDIlib_send_create_t()
+        sendCreate.p_ndi_name = UnsafePointer(persistentRelaySendName)
+        relaySendInstance = NDIlib_send_create(&sendCreate)
+        isRelayActive = true
+    }
+
+    func switchRelay(to sourceName: String) {
+        relayRunning = false
+        relayQueue.async { [weak self] in
+            guard let self = self else { return }
+            if let old = self.relayRecvInstance { NDIlib_recv_destroy(old) }
+            guard let find = self.findInstance else { return }
+            var noSources: UInt32 = 0
+            let sources = NDIlib_find_get_current_sources(find, &noSources)
+            var target: NDIlib_source_t?
+            if noSources > 0, let sources = sources {
+                for i in 0..<Int(noSources) {
+                    if String(cString: sources[i].p_ndi_name) == sourceName {
+                        target = sources[i]; break
+                    }
+                }
+            }
+            guard let source = target else { return }
+            var recvCreate = NDIlib_recv_create_v3_t()
+            recvCreate.source_to_connect_to = source
+            recvCreate.color_format = NDIlib_recv_color_format_BGRX_BGRA
+            self.relayRecvInstance = NDIlib_recv_create_v3(&recvCreate)
+            self.relayRunning = true
+            while self.relayRunning, let recv = self.relayRecvInstance, let send = self.relaySendInstance {
+                autoreleasepool {
+                    var video = NDIlib_video_frame_v2_t()
+                    if NDIlib_recv_capture_v2(recv, &video, nil, nil, 16) == NDIlib_frame_type_video {
+                        NDIlib_send_send_video_v2(send, &video)
+                        NDIlib_recv_free_video_v2(recv, &video)
+                    } else { usleep(10000) }
+                }
+            }
+        }
+    }
+
+    func stopRelay() {
+        relayRunning = false
+        isRelayActive = false
+        if let recv = relayRecvInstance { NDIlib_recv_destroy(recv); relayRecvInstance = nil }
+        if let send = relaySendInstance { NDIlib_send_destroy(send); relaySendInstance = nil }
     }
 }
 
 extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        // ✅ On s'assure que le flux NDI tourne aussi si l'iPhone tourne
+        // ✅ Hardware orientation (from March 28 stability)
         if connection.isVideoOrientationSupported {
             let current = currentOrientation()
             if connection.videoOrientation != current {
                 connection.videoOrientation = current
             }
         }
-        
+
         guard let send = sendInstance, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let stride = CVPixelBufferGetBytesPerRow(pixelBuffer)
         let data = CVPixelBufferGetBaseAddress(pixelBuffer)
-        
+
         var videoFrame = NDIlib_video_frame_v2_t()
         videoFrame.xres = Int32(width)
         videoFrame.yres = Int32(height)
@@ -149,17 +242,16 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         videoFrame.frame_rate_N = 30000
         videoFrame.frame_rate_D = 1001
         videoFrame.frame_format_type = NDIlib_frame_format_type_progressive
-        videoFrame.timecode = Int64.max // NDIlib_send_timecode_synthesize = INT64_MAX
+        videoFrame.timecode = Int64.max
         videoFrame.line_stride_in_bytes = Int32(stride)
         videoFrame.p_data = data?.bindMemory(to: UInt8.self, capacity: stride * height)
-        
+
         NDIlib_send_send_video_v2(send, &videoFrame)
     }
-    
+
     private func currentOrientation() -> AVCaptureVideoOrientation {
         let orientation: UIInterfaceOrientation
         if #available(iOS 13.0, *) {
-            // Sur iOS 13+, on récupère l'orientation de la scène active (plus précis que UIDevice)
             orientation = UIApplication.shared.windows.first { $0.isKeyWindow }?.windowScene?.interfaceOrientation ?? .portrait
         } else {
             orientation = UIApplication.shared.statusBarOrientation

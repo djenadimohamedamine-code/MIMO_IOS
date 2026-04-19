@@ -1,4 +1,4 @@
-name: mimo_ndi
+﻿name: mimo_ndi
 description: Broadcast-quality NDI player and controller.
 version: 1.0.0+1
 environment:
@@ -10,6 +10,11 @@ dependencies:
   cupertino_icons: ^1.0.2
   google_fonts: ^6.1.0
   permission_handler: ^11.0.1
+  webview_flutter: ^4.4.2
+  speech_to_text: ^6.6.1
+  firebase_core: ^2.27.0
+  cloud_firestore: ^4.15.5
+  shared_preferences: ^2.2.3
 
 dev_dependencies:
   flutter_test:
