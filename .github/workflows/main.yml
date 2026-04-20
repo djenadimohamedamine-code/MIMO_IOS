@@ -5,17 +5,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build_ios:
     runs-on: macos-14
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup_Java
-        uses: actions/setup-java@v3
-        with:
-          distribution: 'zulu'
-          java-version: '17'
 
       - name: Flutter
         uses: subosito/flutter-action@v2
@@ -23,32 +17,20 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
 
-      - name: Backup_Custom_Files
+      - name: Backup_iOS_Files
         run: |
-          # ✅ Backup our custom project files BEFORE flutter create overwrites them
           cp pubspec.yaml pubspec.yaml.bak
           cp -r lib lib.bak
           cp -r ios/Runner ios/Runner.bak
-          cp -r android/app/src/main android/app/src/main.bak
-          cp -r android/gradle/wrapper android/gradle/wrapper.bak
-          cp android/app/build.gradle android/app/build.gradle.bak
-          cp android/build.gradle android/build.gradle.bak
-          cp android/settings.gradle android/settings.gradle.bak
 
       - name: Create_Project
-        run: flutter create --project-name=mimo_ndi --platforms=ios,android .
+        run: flutter create --project-name=mimo_ndi --platforms=ios .
 
-      - name: Restore_Custom_Files
+      - name: Restore_iOS_Files
         run: |
-          # ✅ Restore all our custom files after flutter create
           cp pubspec.yaml.bak pubspec.yaml
           cp -r lib.bak/. lib/
           cp -r ios/Runner.bak/. ios/Runner/
-          cp -r android/app/src/main.bak/. android/app/src/main/
-          cp -r android/gradle/wrapper.bak/. android/gradle/wrapper/
-          cp android/app/build.gradle.bak android/app/build.gradle
-          cp android/build.gradle.bak android/build.gradle
-          cp android/settings.gradle.bak android/settings.gradle
 
       - name: Fetch_NDI
         run: |
@@ -64,7 +46,7 @@ jobs:
 
       - name: Deps
         run: |
-          flutter config --enable-ios --enable-android
+          flutter config --enable-ios
           flutter clean
           flutter pub get
 
@@ -93,6 +75,53 @@ jobs:
         with:
           name: mimo-ndi-ipa
           path: build/ios/iphoneos/MIMO_NDI.ipa
+
+  build_android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup_Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+
+      - name: Backup_Android_Files
+        run: |
+          cp pubspec.yaml pubspec.yaml.bak
+          cp -r lib lib.bak
+          cp -r android/app/src/main android/app/src/main.bak
+          cp -r android/gradle/wrapper android/gradle/wrapper.bak
+          cp android/app/build.gradle android/app/build.gradle.bak
+          cp android/build.gradle android/build.gradle.bak
+          cp android/settings.gradle android/settings.gradle.bak
+
+      - name: Create_Project
+        run: flutter create --project-name=mimo_ndi --platforms=android .
+
+      - name: Restore_Android_Files
+        run: |
+          cp pubspec.yaml.bak pubspec.yaml
+          cp -r lib.bak/. lib/
+          cp -r android/app/src/main.bak/. android/app/src/main/
+          cp -r android/gradle/wrapper.bak/. android/gradle/wrapper/
+          cp android/app/build.gradle.bak android/app/build.gradle
+          cp android/build.gradle.bak android/build.gradle
+          cp android/settings.gradle.bak android/settings.gradle
+
+      - name: Deps
+        run: |
+          flutter config --enable-android
+          flutter clean
+          flutter pub get
 
       - name: Build_Android
         run: |
