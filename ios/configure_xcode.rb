@@ -7,7 +7,7 @@ begin
 
   # 1. Config Builder Settings
   target.build_configurations.each do |config|
-    config.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = 'Runner/NDI-Bridging-Header.h'
+    config.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = 'Runner/Runner-Bridging-Header.h'
     # Include NDI headers AND Flutter's generated headers (for GeneratedPluginRegistrant.h)
     config.build_settings['HEADER_SEARCH_PATHS'] = '$(inherited) $(PROJECT_DIR)/NDISDK/include $(SRCROOT)/Flutter'
     config.build_settings['LIBRARY_SEARCH_PATHS'] = '$(inherited) $(PROJECT_DIR)/NDISDK/lib'
@@ -15,6 +15,7 @@ begin
     # Never treat warnings as errors (fixes 3rd-party pod deprecation warnings)
     config.build_settings['SWIFT_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
     config.build_settings['GCC_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
+    config.build_settings['CLANG_WARN_NULLABILITY_COMPLETENESS'] = 'NO'
     
     # 🚨 CRUCIAL : Définition statique pour que les headers NDI fonctionnent sur iOS
     defs = config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] || ['$(inherited)']
@@ -27,7 +28,7 @@ begin
 
   # 2. Add Swift files to the project
   group = project.main_group.find_subpath('Runner', true)
-  files = ['NDIManager.swift', 'NDIView.swift', 'NdiCameraPreview.swift', 'CrashLogger.swift', 'NDI-Bridging-Header.h']
+  files = ['NDIManager.swift', 'NDIView.swift', 'NdiCameraPreview.swift', 'CrashLogger.swift', 'Runner-Bridging-Header.h']
 
   files.each do |f|
     file_ref = group.find_file_by_path(f)

@@ -194,7 +194,7 @@ class NDIManager: NSObject {
                         connection.preferredVideoStabilizationMode = .off
                     }
                     if connection.isVideoOrientationSupported {
-                        connection.videoOrientation = .landscapeRight
+                        connection.videoOrientation = .portrait
                     }
                 }
             }
