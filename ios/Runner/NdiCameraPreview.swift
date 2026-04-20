@@ -33,12 +33,33 @@ class CameraPreviewView: UIView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     private func setupPreview() {
+        self.backgroundColor = .black
+        NotificationCenter.default.addObserver(self, selector: #selector(onCameraReady), name: NSNotification.Name("CameraReady"), object: nil)
+        attachSession()
+    }
+
+    private func attachSession() {
         guard let session = NDIManager.shared.getCaptureSession() else { return }
+        
+        // Nettoyage ancien
+        previewLayer?.removeFromSuperlayer()
+        
         let layer = AVCaptureVideoPreviewLayer(session: session)
         layer.videoGravity = .resizeAspectFill
         layer.frame = self.bounds
         self.layer.addSublayer(layer)
         self.previewLayer = layer
+    }
+
+    @objc private func onCameraReady() {
+        DispatchQueue.main.async {
+            print("👁️ PreviewView: Camera is ready, attaching session...")
+            self.attachSession()
+        }
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func layoutSubviews() {

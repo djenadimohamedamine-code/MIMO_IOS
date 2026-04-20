@@ -378,31 +378,40 @@ class NDIManager: NSObject {
 
 extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        // 🛡️ LOCK: On garde une orientation paysage fixe (.landscapeRight)
-        // mimics professional cameras.
-
-        guard let send = sendInstance, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        guard let send = sendInstance, !isFrameInFlight else { return }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        let stride = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        let data = CVPixelBufferGetBaseAddress(pixelBuffer)
+        // 🚥 LOCK: On ne traite qu'une frame à la fois pour éviter de figer la caméra
+        isFrameInFlight = true
+        
+        // Performance: On passe sur la queue d'envoi pour libérer la caméra IMMÉDIATEMENT
+        sendQueue.async { [weak self] in
+            guard let self = self else { return }
+            defer { self.isFrameInFlight = false }
 
-        var videoFrame = NDIlib_video_frame_v2_t()
-        videoFrame.xres = Int32(width)
-        videoFrame.yres = Int32(height)
-        videoFrame.picture_aspect_ratio = 16.0 / 9.0 // 🎥 FORCE 16:9
-        videoFrame.FourCC = NDIlib_FourCC_video_type_BGRA
-        videoFrame.frame_rate_N = 30000
-        videoFrame.frame_rate_D = 1001
-        videoFrame.frame_format_type = NDIlib_frame_format_type_progressive
-        videoFrame.timecode = Int64.max
-        videoFrame.line_stride_in_bytes = Int32(stride)
-        videoFrame.p_data = data?.bindMemory(to: UInt8.self, capacity: stride * height)
+            CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+            let width = CVPixelBufferGetWidth(pixelBuffer)
+            let height = CVPixelBufferGetHeight(pixelBuffer)
+            let stride = CVPixelBufferGetBytesPerRow(pixelBuffer)
+            let data = CVPixelBufferGetBaseAddress(pixelBuffer)
 
-        NDIlib_send_send_video_v2(send, &videoFrame)
+            var videoFrame = NDIlib_video_frame_v2_t()
+            videoFrame.xres = Int32(width)
+            videoFrame.yres = Int32(height)
+            videoFrame.FourCC = NDIlib_FourCC_video_type_BGRA
+            videoFrame.frame_rate_N = 30000
+            videoFrame.frame_rate_D = 1001
+            videoFrame.picture_aspect_ratio = Float(width) / Float(height)
+            videoFrame.frame_format_type = NDIlib_frame_format_type_progressive
+            videoFrame.timecode = Int64.max
+            videoFrame.line_stride_in_bytes = Int32(stride)
+            videoFrame.p_data = data?.bindMemory(to: UInt8.self, capacity: stride * height)
+
+            NDIlib_send_send_video_v2(send, &videoFrame)
+            CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+            
+            self.lastSendTime = CACurrentMediaTime()
+        }
     }
 
     private func currentOrientation() -> AVCaptureVideoOrientation {
