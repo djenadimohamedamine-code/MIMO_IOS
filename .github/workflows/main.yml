@@ -27,7 +27,7 @@ jobs:
         run: |
           # ✅ Backup our custom project files BEFORE flutter create overwrites them
           cp pubspec.yaml pubspec.yaml.bak
-          cp lib/main.dart lib/main.dart.bak
+          cp -r lib lib.bak
           cp -r ios/Runner ios/Runner.bak
           cp -r android/app/src/main android/app/src/main.bak
           cp -r android/gradle/wrapper android/gradle/wrapper.bak
@@ -42,7 +42,7 @@ jobs:
         run: |
           # ✅ Restore all our custom files after flutter create
           cp pubspec.yaml.bak pubspec.yaml
-          cp lib/main.dart.bak lib/main.dart
+          cp -r lib.bak/. lib/
           cp -r ios/Runner.bak/. ios/Runner/
           cp -r android/app/src/main.bak/. android/app/src/main/
           cp -r android/gradle/wrapper.bak/. android/gradle/wrapper/
@@ -88,15 +88,15 @@ jobs:
           cp -r Runner.app Payload/
           zip -r MIMO_NDI.ipa Payload
 
-      - name: Build_Android
-        run: |
-          flutter build apk --release --obfuscate --split-debug-info=build/app/outputs/symbols
-
       - name: Upload_iOS
         uses: actions/upload-artifact@v4
         with:
           name: mimo-ndi-ipa
           path: build/ios/iphoneos/MIMO_NDI.ipa
+
+      - name: Build_Android
+        run: |
+          flutter build apk --release --obfuscate --split-debug-info=build/app/outputs/symbols
 
       - name: Upload_Android
         uses: actions/upload-artifact@v4
