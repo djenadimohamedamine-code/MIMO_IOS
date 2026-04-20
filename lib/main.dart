@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui';
@@ -162,7 +162,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 
-  final List<String> _titles = ["R├®ception Flux", "Transmettre Cam├®ra", "Multiview 4", "R├®gie Mobile ­ƒÄ¼", "LivePanel Officiel ­ƒîÉ"];
+  final List<String> _titles = ["Reception Flux", "Transmettre Camera", "Multiview 4", "Regie Mobile", "LivePanel Officiel"];
 
   List<Widget> get _pages => [
         _selectedIndex == 0 ? NdiReceiveScreen(sources: _sources, isScanning: _isScanning, onRefresh: _startGlobalScan) : const SizedBox.shrink(),
@@ -243,14 +243,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             ),
           ),
           _drawerItem(0, Icons.download, 'Recevoir Flux'),
-          _drawerItem(1, Icons.videocam, 'Transmettre Cam├®ra'),
+          _drawerItem(1, Icons.videocam, 'Transmettre Camera'),
           _drawerItem(2, Icons.grid_view, 'Multiview 4'),
-          _drawerItem(3, Icons.cut, 'R├®gie Mobile'),
+          _drawerItem(3, Icons.cut, 'Regie Mobile'),
           _drawerItem(4, Icons.language, 'LivePanel Officiel'),
           const Divider(color: Colors.white24),
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.orangeAccent),
-            title: const Text('D├®connexion'),
+            title: const Text('Deconnexion'),
             onTap: () async {
               final prefs = await SharedPreferences.getInstance();
               await prefs.setBool('is_logged_in', false);
@@ -1280,13 +1280,13 @@ enum SwitcherMode { local, relay, api }
 class _SwitcherScreenState extends State<SwitcherScreen> {
   static const _channel = MethodChannel('com.antigravity/ndi');
   int? _activeIndex;
-  SwitcherMode _mode = SwitcherMode.api; // Toujours en mode API Direct
+  SwitcherMode _mode = SwitcherMode.local; 
   String _tricasterIp = "192.168.1.100";
   bool _isTricasterRecording = false;
   double _audioVolume = 0.50; // default 50%
   bool _isAudioMuted = false;
   
-  // ÔÅ│ VOLUME DEBOUNCING
+  // 🔊 VOLUME DEBOUNCING
   Timer? _volumeTimer;
   double? _lastVolumeSent;
 
@@ -1434,7 +1434,7 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('­ƒôí MIMO_NDI_SWITCH actif\nAbonne TriCaster ├á cette source 1x'),
+            content: Text("Flux RELAIS actif (MIMO_NDI_SWITCH)"),
             backgroundColor: Colors.green,
             duration: Duration(seconds: 4),
           ),
@@ -1505,7 +1505,42 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
       children: [
         Column(
           children: [
-            // ÔöÇÔöÇ COMMANDES PRINCIPALES (REC & AUDIO)
+            // 🚥 MODE SELECTOR (Local / Relay / API)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Colors.black,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _ModeButton(
+                      title: 'LOCAL',
+                      icon: Icons.wifi,
+                      isSelected: _mode == SwitcherMode.local,
+                      onTap: () => _changeMode(SwitcherMode.local),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _ModeButton(
+                      title: 'RELAY',
+                      icon: Icons.alt_route,
+                      isSelected: _mode == SwitcherMode.relay,
+                      onTap: () => _changeMode(SwitcherMode.relay),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _ModeButton(
+                      title: 'API',
+                      icon: Icons.settings_remote,
+                      isSelected: _mode == SwitcherMode.api,
+                      onTap: () => _changeMode(SwitcherMode.api),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // ─┬─ COMMANDES PRINCIPALES (REC & AUDIO)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: Row(
