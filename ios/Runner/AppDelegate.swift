@@ -1,4 +1,4 @@
-﻿import UIKit
+import UIKit
 import Flutter
 
 @UIApplicationMain
@@ -58,7 +58,7 @@ import Flutter
         let factory = NDIViewFactory(messenger: controller.binaryMessenger)
         registrar?.register(factory, withId: "ndi-view")
         
-        let cameraFactory = NdiCameraPreviewFactory(messenger: controller.binaryMessenger)
+        let cameraFactory = NdiCameraPreviewFactory()
         registrar?.register(cameraFactory, withId: "ndi-camera-preview")
         
         // ­ƒôï Affichage du crash log si besoin
