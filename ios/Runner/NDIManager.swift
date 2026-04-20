@@ -76,6 +76,23 @@ class NDIManager: NSObject {
         } catch {
             print("❌ AVAudioSession FAIL: \(error)")
         }
+
+        // 🏥 LIFECYCLE WATCHDOG : Redémarrer session après background
+        NotificationCenter.default.addObserver(self, selector: #selector(handleAppDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
+    }
+
+    @objc private func handleAppDidBecomeActive() {
+        captureQueue.async { [weak self] in
+            guard let self = self, let session = self.captureSession else { return }
+            if !session.isRunning {
+                print("🏥 Watchdog: CaptureSession was stopped, restarting...")
+                session.startRunning()
+            }
+        }
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     private func startBackgroundDiscovery() {
