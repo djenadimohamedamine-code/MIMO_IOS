@@ -194,7 +194,7 @@ class NDIManager: NSObject {
                         connection.preferredVideoStabilizationMode = .off
                     }
                     if connection.isVideoOrientationSupported {
-                        connection.videoOrientation = .portrait
+                        connection.videoOrientation = .landscapeRight
                     }
                 }
             }
@@ -378,12 +378,8 @@ class NDIManager: NSObject {
 
 extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        if connection.isVideoOrientationSupported {
-            let current = currentOrientation()
-            if connection.videoOrientation != current {
-                connection.videoOrientation = current
-            }
-        }
+        // 🛡️ LOCK: On garde une orientation paysage fixe (.landscapeRight)
+        // mimics professional cameras.
 
         guard let send = sendInstance, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
@@ -397,7 +393,7 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         var videoFrame = NDIlib_video_frame_v2_t()
         videoFrame.xres = Int32(width)
         videoFrame.yres = Int32(height)
-        videoFrame.picture_aspect_ratio = Float(width) / Float(height)
+        videoFrame.picture_aspect_ratio = 16.0 / 9.0 // 🎥 FORCE 16:9
         videoFrame.FourCC = NDIlib_FourCC_video_type_BGRA
         videoFrame.frame_rate_N = 30000
         videoFrame.frame_rate_D = 1001

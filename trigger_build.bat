@@ -1,0 +1,13 @@
+@echo off
+cd /d %~dp0
+echo 🔄 Modification du build_trigger...
+echo %DATE% %TIME% > build_trigger.txt
+echo 📝 git add...
+git add build_trigger.txt
+echo 💬 git commit...
+git commit -m "TRIGGER: NDI TriCaster Pixel Truth"
+echo 📤 git push...
+git push
+echo.
+echo ✅ Done! Ouvre GitHub pour voir le build.
+pause
