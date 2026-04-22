@@ -91,9 +91,7 @@ class NDIManager: NSObject {
         }
     }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
+
 
     private func startBackgroundDiscovery() {
         discoveryQueue.async { [weak self] in
@@ -386,6 +384,7 @@ class NDIManager: NSObject {
     }
 
     deinit {
+        NotificationCenter.default.removeObserver(self)
         if let find = findInstance { NDIlib_find_destroy(find) }
         if let send = sendInstance { NDIlib_send_destroy(send) }
         if let name = persistentSendName { free(name) }
