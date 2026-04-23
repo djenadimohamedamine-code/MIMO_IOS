@@ -1398,7 +1398,7 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
       if (_mode == SwitcherMode.api) {
         // Ô£à On v├®rifie si la valeur a vraiment chang├® pour ├®conomiser le r├®seau
         if (_lastVolumeSent != val) {
-          await _tricasterCall('v1_volume&value=$val');
+          await _tricasterCall('master_volume&value=${val.toStringAsFixed(2)}');
           _lastVolumeSent = val;
         }
       }
@@ -1457,17 +1457,17 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
         await _channel.invokeMethod('switchRelay', sourceName);
       }
     } else if (_mode == SwitcherMode.api) {
-      // Ô£à AE2 attend "v1", "v2", etc.
-      final inputName = "v${index + 1}";
+      // ✅ TriCaster attend "cam1", "cam2"... pour les entrées caméra
+      final inputName = "cam${index + 1}";
       await _tricasterCall('main_a_row&value=$inputName');
     }
   }
 
   Future<void> _preview(int index) async {
-    if (_previewIndex == index) return; // Ô£à ├ëconomie de bande passante
+    if (_previewIndex == index) return;
     setState(() => _previewIndex = index);
     if (_mode == SwitcherMode.api) {
-        final inputName = "v${index + 1}";
+        final inputName = "cam${index + 1}";
         await _tricasterCall('main_b_row&value=$inputName');
     }
   }
@@ -1666,12 +1666,12 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      _buildMiniButton('DDR1 Ôû║', () => _tricasterCall('ddr1_play'), Colors.purple),
-                      _buildMiniButton('DDR1 Ôûá', () => _tricasterCall('ddr1_stop'), Colors.deepPurple),
-                      _buildMiniButton('DDR2 Ôû║', () => _tricasterCall('ddr2_play'), Colors.purple),
-                      _buildMiniButton('DSK 1 AUTO', () => _tricasterCall('dsk1_auto'), Colors.cyan),
-                      _buildMiniButton('DSK 2 AUTO', () => _tricasterCall('dsk2_auto'), Colors.cyan),
-                      _buildMiniButton('­ƒô© GRAB', () => _tricasterCall('record_grab'), Colors.teal),
+                      _buildMiniButton('DDR1 ▶', () => _tricasterCall('ddr1_play&value=1'), Colors.purple),
+                      _buildMiniButton('DDR1 ⏹', () => _tricasterCall('ddr1_stop&value=1'), Colors.deepPurple),
+                      _buildMiniButton('DDR2 ▶', () => _tricasterCall('ddr2_play&value=1'), Colors.purple),
+                      _buildMiniButton('DSK 1 AUTO', () => _tricasterCall('dsk1_auto&value=1'), Colors.cyan),
+                      _buildMiniButton('DSK 2 AUTO', () => _tricasterCall('dsk2_auto&value=1'), Colors.cyan),
+                      _buildMiniButton('📷 GRAB', () => _tricasterCall('record_grab&value=1'), Colors.teal),
                     ],
                   ),
                 ),

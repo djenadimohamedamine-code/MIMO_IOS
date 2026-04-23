@@ -79,6 +79,8 @@ class NDIManager: NSObject {
 
         // 🏥 LIFECYCLE WATCHDOG : Redémarrer session après background
         NotificationCenter.default.addObserver(self, selector: #selector(handleAppDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleOrientationChange), name: UIDevice.orientationDidChangeNotification, object: nil)
+        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
     }
 
     @objc private func handleAppDidBecomeActive() {
@@ -91,7 +93,23 @@ class NDIManager: NSObject {
         }
     }
 
-
+    @objc private func handleOrientationChange() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let orient = self.currentOrientation()
+            self.captureQueue.async { [weak self] in
+                guard let self = self, let session = self.captureSession else { return }
+                session.outputs.forEach { output in
+                    if let conn = output.connection(with: .video), conn.isVideoOrientationSupported {
+                        if conn.videoOrientation != orient {
+                            conn.videoOrientation = orient
+                            print("🔄 NDI orientation mise à jour: \(orient.rawValue)")
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     private func startBackgroundDiscovery() {
         discoveryQueue.async { [weak self] in
@@ -209,7 +227,9 @@ class NDIManager: NSObject {
                         connection.preferredVideoStabilizationMode = .off
                     }
                     if connection.isVideoOrientationSupported {
-                        connection.videoOrientation = .portrait
+                        DispatchQueue.main.sync {
+                            connection.videoOrientation = self.currentOrientation()
+                        }
                     }
                 }
             }
@@ -258,6 +278,9 @@ class NDIManager: NSObject {
                 session.addInput(newInput) 
             }
             session.commitConfiguration()
+            
+            // On s'assure que l'orientation est correcte pour la nouvelle connexion
+            self.handleOrientationChange()
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 NotificationCenter.default.post(name: NSNotification.Name("CameraReady"), object: nil)
@@ -439,8 +462,8 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         }
         switch orientation {
         case .portrait: return .portrait
-        case .landscapeLeft: return .landscapeLeft
-        case .landscapeRight: return .landscapeRight
+        case .landscapeLeft: return .landscapeRight
+        case .landscapeRight: return .landscapeLeft
         case .portraitUpsideDown: return .portraitUpsideDown
         default: return .portrait
         }
