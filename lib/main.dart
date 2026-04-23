@@ -1398,7 +1398,9 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
       if (_mode == SwitcherMode.api) {
         // Ô£à On v├®rifie si la valeur a vraiment chang├® pour ├®conomiser le r├®seau
         if (_lastVolumeSent != val) {
-          await _tricasterCall('master_volume&value=${val.toStringAsFixed(2)}');
+          // Le fader va de 0.0 à 1.0. On le convertit en Décibels (de -50dB à +5dB)
+          final dbValue = (val * 55) - 50;
+          await _tricasterCall('master_volume&value=${dbValue.toStringAsFixed(2)}');
           _lastVolumeSent = val;
         }
       }
@@ -1457,9 +1459,9 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
         await _channel.invokeMethod('switchRelay', sourceName);
       }
     } else if (_mode == SwitcherMode.api) {
-      // ✅ TriCaster attend "cam1", "cam2"... pour les entrées caméra
-      final inputName = "cam${index + 1}";
-      await _tricasterCall('main_a_row&value=$inputName');
+      // ✅ TriCaster attend "INPUT1", "INPUT2"... avec la commande main_a_row_named_input
+      final inputName = "INPUT${index + 1}";
+      await _tricasterCall('main_a_row_named_input&value=$inputName');
     }
   }
 
@@ -1467,8 +1469,8 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
     if (_previewIndex == index) return;
     setState(() => _previewIndex = index);
     if (_mode == SwitcherMode.api) {
-        final inputName = "cam${index + 1}";
-        await _tricasterCall('main_b_row&value=$inputName');
+        final inputName = "INPUT${index + 1}";
+        await _tricasterCall('main_b_row_named_input&value=$inputName');
     }
   }
 

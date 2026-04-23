@@ -453,17 +453,13 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     }
 
     private func currentOrientation() -> AVCaptureVideoOrientation {
-        let orientation: UIInterfaceOrientation
-        if #available(iOS 13.0, *) {
-            orientation = UIApplication.shared.windows.first { $0.isKeyWindow }?.windowScene?.interfaceOrientation ?? .portrait
-        } else {
-            orientation = UIApplication.shared.statusBarOrientation
-        }
-        switch orientation {
+        // On utilise l'orientation physique du device, car l'interface Flutter peut être bloquée en Portrait
+        let deviceOrient = UIDevice.current.orientation
+        switch deviceOrient {
         case .portrait: return .portrait
-        case .landscapeLeft: return .landscapeRight
-        case .landscapeRight: return .landscapeLeft
         case .portraitUpsideDown: return .portraitUpsideDown
+        case .landscapeLeft: return .landscapeRight // ⚠ Inversé par rapport à l'UI
+        case .landscapeRight: return .landscapeLeft
         default: return .portrait
         }
     }
