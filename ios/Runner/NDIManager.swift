@@ -220,8 +220,8 @@ class NDIManager: NSObject {
             output.setSampleBufferDelegate(self, queue: self.captureQueue)
             output.alwaysDiscardsLateVideoFrames = true
             
-            if session.canAddOutput(output) { 
-                session.addOutput(output) 
+            if session.canAddOutput(output) {
+                session.addOutput(output)
                 if let connection = output.connection(with: .video) {
                     if connection.isVideoStabilizationSupported {
                         connection.preferredVideoStabilizationMode = .off
@@ -419,11 +419,10 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let send = sendInstance, !isFrameInFlight else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        
-        // 🚥 LOCK: On ne traite qu'une frame à la fois pour éviter de figer la caméra
+
+        // 🚨 LOCK: On ne traite qu'une frame à la fois pour éviter de figer la caméra
         isFrameInFlight = true
-        
-        // Performance: On passe sur la queue d'envoi pour libérer la caméra IMMÉDIATEMENT
+
         sendQueue.async { [weak self] in
             guard let self = self else { return }
             defer { self.isFrameInFlight = false }
@@ -448,7 +447,7 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
 
             NDIlib_send_send_video_v2(send, &videoFrame)
             CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
-            
+
             self.lastSendTime = CACurrentMediaTime()
         }
     }
