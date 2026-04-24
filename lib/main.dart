@@ -199,6 +199,17 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               style: const TextStyle(
                   fontWeight: FontWeight.bold, letterSpacing: 1.2)),
           centerTitle: true,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.settings, color: Colors.white70),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                );
+              },
+            ),
+          ],
         ),
         drawer: _buildDrawer(),
         body: IndexedStack(
@@ -1354,6 +1365,9 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
 
   // Ô£à Version robuste AE2 : On teste le port 5952 ET le port 80 en cas d'erreur
   Future<void> _tricasterCall(String params) async {
+    final prefs = await SharedPreferences.getInstance();
+    final currentIp = prefs.getString('switch_api_url') ?? "192.168.1.100";
+
     final ports = [5952, 80];
     bool success = false;
     
@@ -1361,7 +1375,7 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
       if (success) break;
       final client = HttpClient();
       try {
-        final url = 'http://$_tricasterIp:$port/v1/shortcut?name=$params';
+        final url = 'http://$currentIp:$port/v1/shortcut?name=$params';
         final Uri uri = Uri.parse(url);
         final req = await client.getUrl(uri).timeout(const Duration(milliseconds: 1500));
         final resp = await req.close();
@@ -1486,7 +1500,11 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
     }
   }
 
-  void _showDictionary() {
+  void _showDictionary() async {
+     final prefs = await SharedPreferences.getInstance();
+     final currentIp = prefs.getString('switch_api_url') ?? "192.168.1.100";
+     if (!mounted) return;
+
      Navigator.push(
       context,
       MaterialPageRoute(
@@ -1495,7 +1513,7 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
             body: WebViewWidget(
               controller: WebViewController()
                 ..setJavaScriptMode(JavaScriptMode.unrestricted)
-                ..loadRequest(Uri.parse('http://$_tricasterIp:5952/v1/dictionary')),
+                ..loadRequest(Uri.parse('http://$currentIp:5952/v1/dictionary')),
             ),
           )),
     );
