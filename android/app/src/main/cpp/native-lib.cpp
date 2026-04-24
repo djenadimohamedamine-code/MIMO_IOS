@@ -41,7 +41,8 @@ Java_com_antigravity_ndi_1player_1app_NdiView_createReceiver(JNIEnv* env, jobjec
     const char* native_name = env->GetStringUTFChars(sourceName, nullptr);
     NDIlib_recv_create_v3_t recv_create;
     recv_create.source_to_connect_to.p_ndi_name = native_name;
-    recv_create.color_format = NDIlib_recv_color_format_fastest; 
+    // ✅ Use RGBX_RGBA instead of fastest (UYVY) so NDI lib converts it much faster and with correct colors
+    recv_create.color_format = NDIlib_recv_color_format_RGBX_RGBA; 
     recv_create.bandwidth = isLowBandwidth ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest;
     recv_create.allow_video_fields = false;
     NDIlib_recv_instance_t p_instance = NDIlib_recv_create_v3(&recv_create);
@@ -139,7 +140,8 @@ Java_com_antigravity_ndi_1player_1app_NdiView_captureFrameToBitmap(JNIEnv* env, 
                     dst_row[x+1] = (0xFF << 24) | (clamp(r1) << 16) | (clamp(g1) << 8) | clamp(b1);
                 }
             }
-        } else if (video_frame.FourCC == NDIlib_FourCC_video_type_BGRA || video_frame.FourCC == NDIlib_FourCC_video_type_BGRX) {
+        } else if (video_frame.FourCC == NDIlib_FourCC_video_type_RGBA || video_frame.FourCC == NDIlib_FourCC_video_type_RGBX || 
+                   video_frame.FourCC == NDIlib_FourCC_video_type_BGRA || video_frame.FourCC == NDIlib_FourCC_video_type_BGRX) {
             for (int y = 0; y < height; y++) {
                 memcpy((uint8_t*)dst_ptr + y * dst_stride, src_ptr + y * src_stride, width * 4);
             }
