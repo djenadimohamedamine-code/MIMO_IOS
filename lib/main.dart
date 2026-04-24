@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'dart:async';
+import 'dart:convert';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -1310,6 +1311,8 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
   bool _speechEnabled = false;
   bool _isListening = false;
   String _lastWords = '';
+  bool _isTakeActive = false;
+  bool _isAutoActive = false;
 
   @override
   void initState() {
@@ -1352,17 +1355,30 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
     if (!_isListening) return; // ­ƒøí´©Å S├®curit├®: ignorer si micro d├®sactiv├®
     print("Voice Command: $rawCommand");
     // Switcher Commands
-    for (int i = 1; i <= 8; i++) {
-       if (rawCommand.contains("cam├®ra $i") || rawCommand.contains("camera $i") || rawCommand.contains("num├®ro $i") || rawCommand.contains("number $i")) {
-         if (widget.sources.length >= i) _cut(i - 1);
-       }
-    }
+    // Commands are processed below
     // Action Commands
+    if (rawCommand.contains("take") || rawCommand.contains("passe") || rawCommand.contains("coupe")) {
+      _take();
+    }
+    if (rawCommand.contains("auto") || rawCommand.contains("transition") || rawCommand.contains("fondu")) {
+      _auto();
+    }
     if (rawCommand.contains("record") || rawCommand.contains("enregistre") || rawCommand.contains("direct")) {
       _toggleTricasterRecord();
     }
     if (rawCommand.contains("mute") || rawCommand.contains("coupe le son") || rawCommand.contains("silence")) {
       _toggleMute();
+    }
+
+    // Camera Commands (Program vs Preview)
+    for (int i = 1; i <= 8; i++) {
+       if (rawCommand.contains("caméra $i") || rawCommand.contains("camera $i") || rawCommand.contains("numéro $i") || rawCommand.contains("number $i")) {
+         if (rawCommand.contains("preview") || rawCommand.contains("préparation") || rawCommand.contains("attente")) {
+           _preview(i - 1);
+         } else {
+           _cut(i - 1);
+         }
+       }
     }
   }
 
@@ -1382,12 +1398,15 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
         final Uri uri = Uri.parse(url);
         final req = await client.getUrl(uri).timeout(const Duration(milliseconds: 1500));
         final resp = await req.close();
+        final body = await resp.transform(utf8.decoder).join();
         if (resp.statusCode == 200) {
           success = true;
-          _diagLog('­ƒôí API OK ($port): $params');
+          _diagLog('­ƒôí API OK ($port): $params -> $body');
+        } else {
+          _diagLog('ÔØî API Error ($port): ${resp.statusCode} -> $body');
         }
       } catch (e) {
-        _diagLog('ÔÜá´©Å Port $port fail: $params');
+        _diagLog('ÔÜá´©Å Port $port fail: $params ($e)');
       } finally {
         client.close();
       }
@@ -1492,12 +1511,16 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
   }
 
   Future<void> _take() async {
+    setState(() => _isTakeActive = true);
+    Timer(const Duration(milliseconds: 300), () => setState(() => _isTakeActive = false));
     if (_mode == SwitcherMode.api) {
         await _tricasterCall('main_background_take&value=0');
     }
   }
 
   Future<void> _auto() async {
+    setState(() => _isAutoActive = true);
+    Timer(const Duration(milliseconds: 300), () => setState(() => _isAutoActive = false));
     if (_mode == SwitcherMode.api) {
         await _tricasterCall('main_background_auto&value=0');
     }
@@ -1732,25 +1755,27 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
                         children: [
                           const Padding(
                             padding: EdgeInsets.only(bottom: 4),
-                            child: Text('  PROGRAM (A)', style: TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                            child: Text('  PREVIEW (B)', style: TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
                           ),
                           Expanded(
-                            child: ListView.builder(
-                              scrollDirection: Axis.horizontal,
-                              itemCount: (_mode == SwitcherMode.api) ? 8 : widget.sources.length,
-                              itemBuilder: (ctx, i) => _buildCamButton(i, true),
+                            child: Row(
+                              children: List.generate(
+                                (_mode == SwitcherMode.api) ? 8 : widget.sources.length,
+                                (i) => Expanded(child: _buildCamButton(i, false)),
+                              ),
                             ),
                           ),
                           const SizedBox(height: 10),
                           const Padding(
                             padding: EdgeInsets.only(bottom: 4),
-                            child: Text('  PREVIEW (B)', style: TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                            child: Text('  PROGRAM (A)', style: TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
                           ),
                           Expanded(
-                            child: ListView.builder(
-                              scrollDirection: Axis.horizontal,
-                              itemCount: (_mode == SwitcherMode.api) ? 8 : widget.sources.length,
-                              itemBuilder: (ctx, i) => _buildCamButton(i, false),
+                            child: Row(
+                              children: List.generate(
+                                (_mode == SwitcherMode.api) ? 8 : widget.sources.length,
+                                (i) => Expanded(child: _buildCamButton(i, true)),
+                              ),
                             ),
                           ),
                         ],
@@ -1815,22 +1840,24 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
     );
   }
 
-  Widget _buildActionButton({required String label, required IconData icon, required Color color, required VoidCallback onTap}) {
+  Widget _buildActionButton({required String label, required IconData icon, required Color color, required VoidCallback onTap, bool isActive = false}) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
         padding: const EdgeInsets.symmetric(vertical: 16),
         decoration: BoxDecoration(
-          color: const Color(0xFF2B2D32),
+          color: isActive ? color : const Color(0xFF2B2D32),
           borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: color.withOpacity(0.4), width: 1),
+          border: Border.all(color: isActive ? Colors.white : color.withOpacity(0.4), width: isActive ? 2 : 1),
+          boxShadow: isActive ? [BoxShadow(color: color.withOpacity(0.6), blurRadius: 15, spreadRadius: 2)] : [],
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: color, size: 22),
+            Icon(icon, color: isActive ? Colors.black : color, size: 22),
             const SizedBox(width: 8),
-            Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold, letterSpacing: 1.0, fontSize: 16)),
+            Text(label, style: TextStyle(color: isActive ? Colors.black : color, fontWeight: FontWeight.bold, letterSpacing: 1.0, fontSize: 16)),
           ],
         ),
       ),
@@ -1865,8 +1892,7 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        width: 130, // Largeur fixe pour Scroll Horizontal
-        margin: const EdgeInsets.only(right: 8),
+        margin: const EdgeInsets.symmetric(horizontal: 2),
         curve: Curves.easeOut,
         decoration: BoxDecoration(
           color: isSelected ? color : const Color(0xFF2B2D32),
@@ -1879,13 +1905,13 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text('CAM ${i + 1}',
+            Text('${i + 1}',
                 style: TextStyle(
                   color: isSelected ? Colors.white : const Color(0xFFA0A0A0),
-                  fontSize: isSelected ? 22 : 18,
+                  fontSize: isSelected ? 18 : 14,
                   fontWeight: FontWeight.w900,
                   fontFamily: 'Courier',
-                  letterSpacing: 1.2,
+                  letterSpacing: 1.0,
                   shadows: isSelected ? [const Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(0, 2))] : null,
                 )),
             const SizedBox(height: 6),
@@ -1897,7 +1923,7 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
               ),
               child: Text(
                 (_mode == SwitcherMode.api) 
-                   ? 'TRICASTER IN' 
+                   ? 'TC-IN' 
                    : widget.sources[i].split(' ').last,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
