@@ -12,6 +12,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'login_screen.dart';
 import 'firebase_options.dart';
+import 'midas_m32.dart';
 
 void main() async {
   _diagLog('­ƒÜÇ App Launching...');
@@ -162,7 +163,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 
-  final List<String> _titles = ["Reception Flux", "Transmettre Camera", "Multiview 4", "Regie Mobile", "LivePanel Officiel"];
+  final List<String> _titles = ["Reception Flux", "Transmettre Camera", "Multiview 4", "Regie Mobile", "LivePanel Officiel", "Midas M32"];
 
   List<Widget> get _pages => [
         _selectedIndex == 0 ? NdiReceiveScreen(sources: _sources, isScanning: _isScanning, onRefresh: _startGlobalScan) : const SizedBox.shrink(),
@@ -170,6 +171,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         _selectedIndex == 2 ? MultiviewScreen(sources: _sources) : const SizedBox.shrink(),
         _selectedIndex == 3 ? SwitcherScreen(sources: _sources, onRefresh: _startGlobalScan) : const SizedBox.shrink(),
         _selectedIndex == 4 ? const LivePanelScreen() : const SizedBox.shrink(),
+        _selectedIndex == 5 ? const MidasM32Screen() : const SizedBox.shrink(),
       ];
 
   @override
@@ -258,6 +260,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           _drawerItem(2, Icons.grid_view, 'Multiview 4'),
           _drawerItem(3, Icons.cut, 'Regie Mobile'),
           _drawerItem(4, Icons.language, 'LivePanel Officiel'),
+          _drawerItem(5, Icons.graphic_eq, 'Midas M32'),
           const Divider(color: Colors.white24),
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.orangeAccent),
@@ -1988,6 +1991,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final TextEditingController _ipController = TextEditingController();
+  final TextEditingController _midasIpController = TextEditingController();
   bool _isSaving = false;
 
   @override
@@ -2000,6 +2004,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _ipController.text = prefs.getString('switch_api_url') ?? "192.168.1.100";
+      _midasIpController.text = prefs.getString('midas_ip') ?? "192.168.1.200";
     });
   }
 
@@ -2007,10 +2012,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _isSaving = true);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('switch_api_url', _ipController.text);
+    await prefs.setString('midas_ip', _midasIpController.text);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Ô£à Configuration enregistr├®e'),
+          content: Text('✅ Configuration enregistrée'),
           backgroundColor: Colors.green,
           behavior: SnackBarBehavior.floating,
         ),
@@ -2032,51 +2038,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(24),
         children: [
-          const Text('IP TRICASTER / SOURCE API', 
+          // ─── SECTION TRICASTER ───
+          const Text('IP TRICASTER / SOURCE API',
             style: TextStyle(color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
           const SizedBox(height: 16),
-          
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white12),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Adresse IP statique', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                const Text('Utilis├®e quand le Discovery mDNS automatique ne d├®tecte pas votre TriCaster ou votre source NDI.', 
-                  style: TextStyle(color: Colors.white38, fontSize: 12)),
-                const SizedBox(height: 20),
-                TextField(
-                  controller: _ipController,
-                  style: const TextStyle(color: Colors.greenAccent, fontSize: 20, fontFamily: 'Courier', fontWeight: FontWeight.bold),
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.lan, color: Colors.greenAccent),
-                    hintText: '192.168.1.XXX',
-                    hintStyle: const TextStyle(color: Colors.white10),
-                    filled: true,
-                    fillColor: Colors.black38,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 18),
-                  ),
-                ),
-              ],
-            ),
+          _buildIpCard(
+            label: 'Adresse IP TriCaster',
+            subtitle: 'Utilisée pour le LivePanel et le contrôle du switcher TriCaster.',
+            controller: _ipController,
+            hint: '192.168.1.XXX',
+            iconColor: Colors.greenAccent,
           ),
-          
+
+          const SizedBox(height: 28),
+
+          // ─── SECTION MIDAS M32 ───
+          const Text('IP MIDAS M32 (OSC / UDP)',
+            style: TextStyle(color: Colors.orangeAccent, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+          const SizedBox(height: 16),
+          _buildIpCard(
+            label: 'Adresse IP Midas M32',
+            subtitle: 'Connexion OSC sur le port 10023. Masque standard : 255.255.255.0',
+            controller: _midasIpController,
+            hint: '192.168.1.200',
+            iconColor: Colors.orangeAccent,
+          ),
+
           const SizedBox(height: 40),
-          
+
           SizedBox(
             width: double.infinity,
             height: 60,
             child: ElevatedButton.icon(
               onPressed: _isSaving ? null : _saveSettings,
-              icon: _isSaving 
+              icon: _isSaving
                 ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
                 : const Icon(Icons.save_rounded),
               label: const Text('APPLIQUER LA CONFIGURATION', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
@@ -2089,12 +2084,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ),
-          
+
           const SizedBox(height: 20),
           const Text(
-            'Note : La modification de l\'IP red├®marrera les connexions API du Switcher et rechargera le LivePanel.',
+            'Note : Les modifications seront prises en compte au prochain lancement des modules concernés.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.white24, fontSize: 11, fontStyle: FontStyle.italic),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIpCard({
+    required String label,
+    required String subtitle,
+    required TextEditingController controller,
+    required String hint,
+    required Color iconColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: iconColor.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Text(subtitle, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+          const SizedBox(height: 20),
+          TextField(
+            controller: controller,
+            style: TextStyle(color: iconColor, fontSize: 20, fontFamily: 'Courier', fontWeight: FontWeight.bold),
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              prefixIcon: Icon(Icons.lan, color: iconColor),
+              hintText: hint,
+              hintStyle: const TextStyle(color: Colors.white10),
+              filled: true,
+              fillColor: Colors.black38,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              contentPadding: const EdgeInsets.symmetric(vertical: 18),
+            ),
           ),
         ],
       ),
