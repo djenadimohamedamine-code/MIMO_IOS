@@ -59,7 +59,10 @@ jobs:
       - name: Pods
         run: |
           cd ios
-          pod install --repo-update
+          for i in 1 2 3 4 5; do
+            echo "Tentative $i pour pod install..."
+            pod install --repo-update && break || sleep 15
+          done
 
       - name: Build_iOS
         run: |
