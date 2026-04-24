@@ -1724,74 +1724,33 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
                           ],
                         ),
                       )
-                    : GridView.builder(
-                        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 140,
-                          mainAxisExtent: 80,
-                          crossAxisSpacing: 10,
-                          mainAxisSpacing: 10,
-                        ),
-                        itemCount: (_mode == SwitcherMode.api) ? 8 : widget.sources.length,
-                        itemBuilder: (ctx, i) {
-                          final isProgram = _programIndex == i;
-                          final isPreview = _previewIndex == i;
-                          
-                          return GestureDetector(
-                            onTap: () => _cut(i),
-                            onLongPress: () => _preview(i), // Ô£à Long press pour le Preview
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              curve: Curves.easeOut,
-                              decoration: BoxDecoration(
-                                color: isProgram ? const Color(0xFF3A3C42) : isPreview ? const Color(0xFF35373C) : const Color(0xFF2B2D32), // Flat NC1 dark block
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(
-                                  color: const Color(0xFF1E2024),
-                                  width: 1,
-                                ),
-                              ),
-                              child: Stack(
-                                children: [
-                                  Center(
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        Text('CAM ${i + 1}',
-                                            style: TextStyle(
-                                              color: (isProgram || isPreview) ? Colors.white : const Color(0xFFA0A0A0),
-                                              fontSize: (isProgram || isPreview) ? 22 : 18,
-                                              fontWeight: FontWeight.w900,
-                                              fontFamily: 'Courier', // Look plus technique
-                                              letterSpacing: 1.2,
-                                              shadows: (isProgram || isPreview) ? [const Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(0, 2))] : null,
-                                            )),
-                                        const SizedBox(height: 6),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: Colors.black26,
-                                            borderRadius: BorderRadius.circular(4),
-                                          ),
-                                          child: Text(
-                                            (_mode == SwitcherMode.api) 
-                                               ? 'TRICASTER IN' 
-                                               : widget.sources[i].split(' ').last,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              color: (isProgram || isPreview) ? Colors.white : Colors.white54,
-                                              fontSize: 9,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 4),
+                            child: Text('  PROGRAM (A)', style: TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                          ),
+                          Expanded(
+                            child: ListView.builder(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: (_mode == SwitcherMode.api) ? 8 : widget.sources.length,
+                              itemBuilder: (ctx, i) => _buildCamButton(i, true),
                             ),
-                          );
-                        },
+                          ),
+                          const SizedBox(height: 10),
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 4),
+                            child: Text('  PREVIEW (B)', style: TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                          ),
+                          Expanded(
+                            child: ListView.builder(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: (_mode == SwitcherMode.api) ? 8 : widget.sources.length,
+                              itemBuilder: (ctx, i) => _buildCamButton(i, false),
+                            ),
+                          ),
+                        ],
                       ),
               ),
             ),
@@ -1887,6 +1846,66 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
           border: Border.all(color: color.withOpacity(0.3), width: 1),
         ),
         child: Text(label, style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+      ),
+    );
+  }
+
+  Widget _buildCamButton(int i, bool isProgramRow) {
+    final isSelected = isProgramRow ? (_programIndex == i) : (_previewIndex == i);
+    final color = isProgramRow ? const Color(0xFFB71C1C) : const Color(0xFF2E7D32);
+    final borderColor = isProgramRow ? Colors.redAccent : Colors.greenAccent;
+    
+    return GestureDetector(
+      onTap: () {
+        if (isProgramRow) _cut(i);
+        else _preview(i);
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        width: 130, // Largeur fixe pour Scroll Horizontal
+        margin: const EdgeInsets.only(right: 8),
+        curve: Curves.easeOut,
+        decoration: BoxDecoration(
+          color: isSelected ? color : const Color(0xFF2B2D32),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color: isSelected ? borderColor : const Color(0xFF1E2024),
+            width: isSelected ? 2.0 : 1.0,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text('CAM ${i + 1}',
+                style: TextStyle(
+                  color: isSelected ? Colors.white : const Color(0xFFA0A0A0),
+                  fontSize: isSelected ? 22 : 18,
+                  fontWeight: FontWeight.w900,
+                  fontFamily: 'Courier',
+                  letterSpacing: 1.2,
+                  shadows: isSelected ? [const Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(0, 2))] : null,
+                )),
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.black26,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                (_mode == SwitcherMode.api) 
+                   ? 'TRICASTER IN' 
+                   : widget.sources[i].split(' ').last,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.white54,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
