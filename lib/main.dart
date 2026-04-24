@@ -997,6 +997,25 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
   @override
   void initState() {
     super.initState();
+    _loadSlots();
+  }
+
+  Future<void> _loadSlots() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      for (int i = 0; i < 4; i++) {
+        _slots[i] = prefs.getString('multiview_slot_$i');
+      }
+    });
+  }
+
+  Future<void> _saveSlot(int index, String? value) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (value == null) {
+      await prefs.remove('multiview_slot_$index');
+    } else {
+      await prefs.setString('multiview_slot_$index', value);
+    }
   }
 
   void _assignSource(int slot) {
@@ -1032,6 +1051,7 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
                   title: Text(s),
                   onTap: () {
                     setState(() => _slots[slot] = s);
+                    _saveSlot(slot, s);
                     Navigator.pop(context);
                   },
                 )),
@@ -1042,6 +1062,7 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
                     style: TextStyle(color: Colors.redAccent)),
                 onTap: () {
                   setState(() => _slots[slot] = null);
+                  _saveSlot(slot, null);
                   Navigator.pop(context);
                 },
               ),
@@ -1317,14 +1338,16 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
   @override
   void initState() {
     super.initState();
-    _loadIp();
+    _loadSettings();
     // _initSpeech(); // ­ƒº¬ TEST : On d├®sactive la voix pour voir si ├ºa r├¿gle le freeze cam├®ra
   }
 
-  Future<void> _loadIp() async {
+  Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _tricasterIp = prefs.getString('switch_api_url') ?? "192.168.1.100";
+      _programIndex = prefs.getInt('last_program_index');
+      _previewIndex = prefs.getInt('last_preview_index');
     });
   }
 
@@ -1486,8 +1509,11 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
   }
 
   Future<void> _cut(int index) async {
-    if (_programIndex == index) return; // Ô£à ├ëconomie de bande passante
+    if (_programIndex == index) return; 
     setState(() => _programIndex = index);
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('last_program_index', index);
 
     if (_mode == SwitcherMode.relay) {
       if (index < widget.sources.length) {
@@ -1495,7 +1521,6 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
         await _channel.invokeMethod('switchRelay', sourceName);
       }
     } else if (_mode == SwitcherMode.api) {
-      // ✅ TriCaster attend "INPUT1", "INPUT2"... avec la commande main_a_row_named_input
       final inputName = "INPUT${index + 1}";
       await _tricasterCall('main_a_row_named_input&value=$inputName');
     }
@@ -1504,6 +1529,10 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
   Future<void> _preview(int index) async {
     if (_previewIndex == index) return;
     setState(() => _previewIndex = index);
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('last_preview_index', index);
+
     if (_mode == SwitcherMode.api) {
         final inputName = "INPUT${index + 1}";
         await _tricasterCall('main_b_row_named_input&value=$inputName');
@@ -1511,7 +1540,19 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
   }
 
   Future<void> _take() async {
-    setState(() => _isTakeActive = true);
+    setState(() {
+      _isTakeActive = true;
+      // Flip-Flop logic: Swap Program and Preview
+      final temp = _programIndex;
+      _programIndex = _previewIndex;
+      _previewIndex = temp;
+    });
+
+    // Persist new state
+    final prefs = await SharedPreferences.getInstance();
+    if (_programIndex != null) await prefs.setInt('last_program_index', _programIndex!);
+    if (_previewIndex != null) await prefs.setInt('last_preview_index', _previewIndex!);
+
     Timer(const Duration(milliseconds: 300), () => setState(() => _isTakeActive = false));
     if (_mode == SwitcherMode.api) {
         await _tricasterCall('main_background_take&value=0');
@@ -1519,7 +1560,19 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
   }
 
   Future<void> _auto() async {
-    setState(() => _isAutoActive = true);
+    setState(() {
+      _isAutoActive = true;
+      // Flip-Flop logic: Swap Program and Preview
+      final temp = _programIndex;
+      _programIndex = _previewIndex;
+      _previewIndex = temp;
+    });
+
+    // Persist new state
+    final prefs = await SharedPreferences.getInstance();
+    if (_programIndex != null) await prefs.setInt('last_program_index', _programIndex!);
+    if (_previewIndex != null) await prefs.setInt('last_preview_index', _previewIndex!);
+
     Timer(const Duration(milliseconds: 300), () => setState(() => _isAutoActive = false));
     if (_mode == SwitcherMode.api) {
         await _tricasterCall('main_background_auto&value=0');
