@@ -803,8 +803,6 @@ class _NdiSendScreenState extends State<NdiSendScreen> {
   static const _channel = MethodChannel('com.antigravity/ndi');
   bool _isSending = false;
   String _sourceName = 'MIMO_NDI Camera';
-  String _sendResolution = "720p";
-  int _sendFps = 30;
 
   @override
   void initState() {
@@ -813,107 +811,11 @@ class _NdiSendScreenState extends State<NdiSendScreen> {
   }
 
   Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _sendResolution = prefs.getString('send_res') ?? "720p";
-      _sendFps = prefs.getInt('send_fps') ?? 30;
-    });
-    // On attend 5 secondes avant d'allumer la caméra pour laisser passer 
-    // les pop-ups de permissions et éviter un Deadlock iOS
+    // Appel direct avec les paramètres par défaut (720p 30fps)
     Future.delayed(const Duration(seconds: 5), () {
       if (mounted) {
-        _channel.invokeMethod('setupCamera', {
-          'resolution': _sendResolution,
-          'fps': _sendFps
-        });
+        _channel.invokeMethod('setupCamera');
       }
-    });
-  }
-
-  void _showSettingsMenu() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.95),
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          border: Border.all(color: Colors.white24, width: 1),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('⚙️ RÉGLAGES CAMÉRA BROADCAST', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            const Text('⚠️ ATTENTION : Les résolutions 1080p et 4K ou les FPS élevés exigent un réseau Wi-Fi parfait ou un adaptateur Ethernet. Risque de surchauffe ou saccades si le réseau est faible.', style: TextStyle(color: Colors.orangeAccent, fontSize: 11)),
-            const SizedBox(height: 20),
-            
-            const Text('RÉSOLUTION', style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildOptionBtn('720p', '720p', _sendResolution, (v) => _updateSettings(res: v)),
-                _buildOptionBtn('1080p', '1080p', _sendResolution, (v) => _updateSettings(res: v)),
-                _buildOptionBtn('4K', '4K', _sendResolution, (v) => _updateSettings(res: v)),
-              ],
-            ),
-            const SizedBox(height: 20),
-            
-            const Text('FRÉQUENCE (FPS)', style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildOptionBtn('24 fps', 24, _sendFps, (v) => _updateSettings(fps: v)),
-                _buildOptionBtn('30 fps', 30, _sendFps, (v) => _updateSettings(fps: v)),
-                _buildOptionBtn('60 fps', 60, _sendFps, (v) => _updateSettings(fps: v)),
-              ],
-            ),
-            const SizedBox(height: 30),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOptionBtn(String label, dynamic value, dynamic currentValue, Function(dynamic) onTap) {
-    bool isSelected = value == currentValue;
-    return GestureDetector(
-      onTap: () {
-        onTap(value);
-        Navigator.pop(context);
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.blueAccent : Colors.white10,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: isSelected ? Colors.white : Colors.transparent),
-        ),
-        child: Text(label, style: TextStyle(color: isSelected ? Colors.white : Colors.white70, fontWeight: FontWeight.bold, fontSize: 12)),
-      ),
-    );
-  }
-
-  Future<void> _updateSettings({String? res, int? fps}) async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      if (res != null) {
-        _sendResolution = res;
-        prefs.setString('send_res', res);
-      }
-      if (fps != null) {
-        _sendFps = fps;
-        prefs.setInt('send_fps', fps);
-      }
-    });
-    // Relancer la caméra avec les nouveaux settings
-    _channel.invokeMethod('setupCamera', {
-      'resolution': _sendResolution,
-      'fps': _sendFps
     });
   }
 
@@ -1016,22 +918,6 @@ class _NdiSendScreenState extends State<NdiSendScreen> {
                         ),
                       ),
                       
-                    // Engrenage Settings
-                    Positioned(
-                      top: 12,
-                      right: 12,
-                      child: GestureDetector(
-                        onTap: _showSettingsMenu,
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: const BoxDecoration(
-                            color: Colors.black54,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.settings, color: Colors.white, size: 24),
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ),

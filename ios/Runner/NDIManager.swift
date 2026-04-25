@@ -26,9 +26,7 @@ class NDIManager: NSObject {
     private var outputPixelBufferPool: CVPixelBufferPool?
     private var poolWidth: Int = 0
     private var poolHeight: Int = 0
-    private var isFrameInFlight = false // 🚥 Strict "One Frame Only" logic
     private let flightLock = DispatchQueue(label: "ndi.flight.lock")
-    private var isConfiguringCamera = false // 🔒 Lock anti-crash
 
     // 🎬 NDI RELAY SYSTEM (MIMO_NDI_SWITCH → TriCaster)
     private var relaySendInstance: NDIlib_send_instance_t?
@@ -183,12 +181,6 @@ class NDIManager: NSObject {
     }
 
     func setupCamera(position: AVCaptureDevice.Position = .back, resolution: String = "720p", fps: Int32 = 30) {
-        // 🔒 LOCK : On évite les doubles appels qui font crash
-        if isConfiguringCamera { 
-            print("⚠️ Configuration déjà en cours, on ignore.")
-            return 
-        }
-        isConfiguringCamera = true
         self.currentFps = fps
 
         captureQueue.async { [weak self] in
@@ -203,23 +195,8 @@ class NDIManager: NSObject {
             let session = AVCaptureSession()
             session.beginConfiguration()
             
-            var preset: AVCaptureSession.Preset = .hd1280x720
-            switch resolution {
-            case "1080p":
-                preset = .hd1920x1080
-            case "4K":
-                preset = .hd4K3840x2160
-            default:
-                preset = .hd1280x720
-            }
-            
-            // ✅ Vérification de compatibilité du Preset pour éviter le crash
-            if session.canSetSessionPreset(preset) {
-                session.sessionPreset = preset
-            } else {
-                print("⚠️ Preset \(resolution) non supporté, repli sur 720p")
-                session.sessionPreset = .hd1280x720
-            }
+            // ✅ Retour à 720p fixe pour stabilité maximale
+            session.sessionPreset = .hd1280x720
             
             // On s'assure que tout est vierge
             session.inputs.forEach { session.removeInput($0) }
@@ -232,27 +209,17 @@ class NDIManager: NSObject {
                 return
             }
             
-            // ✅ Appliquer le Framerate (Sécurisé)
+            // ✅ Framerate fixe 30 fps
             try? device.lockForConfiguration()
-            let ranges = device.activeFormat.videoSupportedFrameRateRanges
-            var bestRange = ranges.first
-            for range in ranges {
-                if Double(fps) >= range.minFrameRate && Double(fps) <= range.maxFrameRate {
-                    bestRange = range; break
-                }
-            }
-            
-            if let range = bestRange {
-                device.activeVideoMinFrameDuration = range.minFrameDuration
-                device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: fps)
-            }
+            device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 30)
+            device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
             device.unlockForConfiguration()
             
             if session.canAddInput(input) { session.addInput(input) }
             
             let output = AVCaptureVideoDataOutput()
-            // Utiliser UYVY 4:2:2 pour réduire la bande passante de moitié comparé à BGRA
-            output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_422YpCbCr8]
+            // ✅ Retour au format BGRA (Original)
+            output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
             output.setSampleBufferDelegate(self, queue: self.captureQueue)
             output.alwaysDiscardsLateVideoFrames = true
             
@@ -281,13 +248,10 @@ class NDIManager: NSObject {
             session.automaticallyConfiguresApplicationAudioSession = false
             
             session.startRunning()
-            self.isConfiguringCamera = false
-            print("🚀 Caméra opérationnelle (State: Ready)")
+            print("🚀 Caméra opérationnelle (State: Ready - 720p RGB)")
             
-            // 📢 S'assurer que la caméra est réellement active avant notification
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 NotificationCenter.default.post(name: NSNotification.Name("CameraReady"), object: nil)
-                print("📢 CameraReady envoyé (session stable)")
             }
         }
     }
@@ -453,15 +417,12 @@ class NDIManager: NSObject {
 
 extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        guard let send = sendInstance, !isFrameInFlight else { return }
+        guard let send = sendInstance else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        // 🚨 LOCK: On ne traite qu'une frame à la fois pour éviter de figer la caméra
-        isFrameInFlight = true
-
+        // ✅ Utilisation du pool de buffers pour éviter les allocations mémoire excessives
         sendQueue.async { [weak self] in
             guard let self = self else { return }
-            defer { self.isFrameInFlight = false }
 
             CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
             let width = CVPixelBufferGetWidth(pixelBuffer)
@@ -476,15 +437,13 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
             var videoFrame = NDIlib_video_frame_v2_t()
             videoFrame.xres = Int32(width)
             videoFrame.yres = Int32(height)
-            // L'iPhone nous donne du UYVY (422YpCbCr8)
-            videoFrame.FourCC = NDIlib_FourCC_video_type_UYVY
-            
-            // Use currentFps. NDI requires N/D format. 30000/1000 = 30fps.
-            videoFrame.frame_rate_N = self.currentFps * 1000
-            videoFrame.frame_rate_D = 1000
+            // ✅ Format BGRA natif (RGB)
+            videoFrame.FourCC = NDIlib_FourCC_video_type_BGRA
+            videoFrame.frame_rate_N = 30000
+            videoFrame.frame_rate_D = 1001
             videoFrame.picture_aspect_ratio = Float(width) / Float(height)
             videoFrame.frame_format_type = NDIlib_frame_format_type_progressive
-            videoFrame.timecode = NDIlib_send_timecode_synthesize
+            videoFrame.timecode = Int64.max
             videoFrame.line_stride_in_bytes = Int32(stride)
             videoFrame.p_data = data.bindMemory(to: UInt8.self, capacity: stride * height)
 
