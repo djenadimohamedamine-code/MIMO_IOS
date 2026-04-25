@@ -64,25 +64,47 @@ class SunlightApi {
     await _sendOsc("/button/$sceneNumber");
   }
 
-  /// Formatage et envoi d'un message OSC simple (sans argument)
+  /// Formatage et envoi d'un message OSC avec argument Float 1.0
   Future<void> _sendOsc(String address) async {
     RawDatagramSocket? socket;
     try {
       socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
       
-      // Construction manuelle du paquet OSC simple (Adresse + ,)
-      // On doit aligner sur 4 octets
+      // Construction du paquet OSC : [Adresse] [Type] [Valeur]
       List<int> packet = [];
+      
+      // 1. Adresse (ex: /button/0)
       packet.addAll(utf8.encode(address));
       packet.add(0);
       while (packet.length % 4 != 0) { packet.add(0); }
       
-      packet.addAll(utf8.encode(","));
+      // 2. Types string (,f pour float)
+      packet.addAll(utf8.encode(",f"));
       packet.add(0);
       while (packet.length % 4 != 0) { packet.add(0); }
+      
+      // 3. Valeur float 1.0 (IEEE 754 : 0x3f800000)
+      packet.addAll([0x3f, 0x80, 0x00, 0x00]);
 
+      // Envoi sur les ports 7000 et 8000 (les deux standards Nicolaudie)
       socket.send(packet, InternetAddress(ipAddress), 7000);
-      print("🎭 Sunlite OSC → $ipAddress:7000 [$address]");
+      socket.send(packet, InternetAddress(ipAddress), 8000);
+      
+      // On envoie aussi une variante d'adresse /scene/X pour être sûr
+      final altAddress = address.replaceAll("button", "scene");
+      List<int> altPacket = [];
+      altPacket.addAll(utf8.encode(altAddress));
+      altPacket.add(0);
+      while (altPacket.length % 4 != 0) { altPacket.add(0); }
+      altPacket.addAll(utf8.encode(",f"));
+      altPacket.add(0);
+      while (altPacket.length % 4 != 0) { altPacket.add(0); }
+      altPacket.addAll([0x3f, 0x80, 0x00, 0x00]);
+      
+      socket.send(altPacket, InternetAddress(ipAddress), 7000);
+      socket.send(altPacket, InternetAddress(ipAddress), 8000);
+
+      print("🎭 Sunlite OSC (Float 1.0) → $ipAddress:7000/8000 [$address & $altAddress]");
     } catch (e) {
       print("❌ OSC Error: $e");
     } finally {
