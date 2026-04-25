@@ -53,6 +53,7 @@ jobs:
 
       - name: Deps
         run: |
+          rm -rf android
           flutter config --enable-ios
           flutter clean
           flutter pub get
@@ -122,11 +123,7 @@ jobs:
         run: |
           cp pubspec.yaml.bak pubspec.yaml
           cp -r lib.bak/. lib/
-          [ -d "android/app/src/main.bak" ] && cp -r android/app/src/main.bak/. android/app/src/main/ || true
-          [ -d "android/gradle/wrapper.bak" ] && cp -r android/gradle/wrapper.bak/. android/gradle/wrapper/ || true
-          [ -f "android/app/build.gradle.bak" ] && cp android/app/build.gradle.bak android/app/build.gradle || true
-          [ -f "android/build.gradle.bak" ] && cp android/build.gradle.bak android/build.gradle || true
-          [ -f "android/settings.gradle.bak" ] && cp android/settings.gradle.bak android/settings.gradle || true
+          # Les fichiers natifs NDI sont déjà dans le dépôt, pas besoin de les restaurer depuis un backup.
 
       - name: Fix_Android_MinSdk
         run: |
