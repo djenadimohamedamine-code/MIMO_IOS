@@ -18,16 +18,9 @@ class NDIManager: NSObject {
     private let captureQueue = DispatchQueue(label: "ndi.capture.queue", qos: .userInitiated)
     private let sendQueue = DispatchQueue(label: "ndi.send.queue", qos: .userInitiated)
     private(set) var currentCameraPosition: AVCaptureDevice.Position = .back
-    private var currentFps: Int32 = 30
     private var lastFrameTime = CACurrentMediaTime()
     private var lastSendTime = CACurrentMediaTime() // 🔧 Watchdog NDI
     
-    // 🏗️ PRO PIPELINE: LOCK & STATE
-    private var outputPixelBufferPool: CVPixelBufferPool?
-    private var poolWidth: Int = 0
-    private var poolHeight: Int = 0
-    private let flightLock = DispatchQueue(label: "ndi.flight.lock")
-
     // 🎬 NDI RELAY SYSTEM (MIMO_NDI_SWITCH → TriCaster)
     private var relaySendInstance: NDIlib_send_instance_t?
     private var relayRecvInstance: NDIlib_recv_instance_t?
