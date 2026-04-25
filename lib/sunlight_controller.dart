@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,14 +19,25 @@ class SunlightApi {
     RawDatagramSocket? socket;
     try {
       socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-      // Disable broadcast if not needed, or ensure it's allowed
       socket.broadcastEnabled = true; 
+      
+      // 1. Envoi standard (4 octets)
       socket.send(bytes, InternetAddress(ipAddress), port);
-      print("☀️ Sunlite UDP → $ipAddress:$port  [${bytes.join(', ')}]");
+      
+      // 2. Envoi format NICO (8 octets) - Souvent requis pour Sunlite 3
+      final nicoPacket = [...utf8.encode('NICO'), ...bytes];
+      socket.send(nicoPacket, InternetAddress(ipAddress), port);
+
+      // 3. Envoi en Broadcast sur le sous-réseau (ex: 192.168.1.255)
+      try {
+        final String subnet = ipAddress.substring(0, ipAddress.lastIndexOf('.'));
+        socket.send(bytes, InternetAddress('$subnet.255'), port);
+      } catch (_) {}
+
+      print("☀️ Sunlite UDP → $ipAddress:$port [Formats: Standard & NICO]");
     } catch (e) {
       print("❌ Sunlite UDP Error: $e");
     } finally {
-      // Small delay to ensure packet is out before closing
       await Future.delayed(const Duration(milliseconds: 10));
       socket?.close();
     }
