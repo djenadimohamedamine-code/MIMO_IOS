@@ -46,7 +46,10 @@ import Flutter
                 NDIManager.shared.stopRelay()
                 result(true)
             } else if call.method == "setupCamera" {
-                NDIManager.shared.setupCamera()
+                let args = call.arguments as? [String: Any]
+                let res = args?["resolution"] as? String ?? "720p"
+                let fps = args?["fps"] as? Int32 ?? 30
+                NDIManager.shared.setupCamera(resolution: res, fps: fps)
                 result(true)
             } else {
                 result(FlutterMethodNotImplemented)

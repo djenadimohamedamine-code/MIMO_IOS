@@ -18,6 +18,7 @@ class NDIManager: NSObject {
     private let captureQueue = DispatchQueue(label: "ndi.capture.queue", qos: .userInitiated)
     private let sendQueue = DispatchQueue(label: "ndi.send.queue", qos: .userInitiated)
     private(set) var currentCameraPosition: AVCaptureDevice.Position = .back
+    private var currentFps: Int32 = 30
     private var lastFrameTime = CACurrentMediaTime()
     private var lastSendTime = CACurrentMediaTime() // 🔧 Watchdog NDI
     
@@ -181,13 +182,14 @@ class NDIManager: NSObject {
         return captureSession
     }
 
-    func setupCamera(position: AVCaptureDevice.Position = .back) {
+    func setupCamera(position: AVCaptureDevice.Position = .back, resolution: String = "720p", fps: Int32 = 30) {
         // 🔒 LOCK : On évite les doubles appels qui font crash
         if isConfiguringCamera { 
             print("⚠️ Configuration déjà en cours, on ignore.")
             return 
         }
         isConfiguringCamera = true
+        self.currentFps = fps
 
         captureQueue.async { [weak self] in
             guard let self = self else { return }
@@ -200,7 +202,15 @@ class NDIManager: NSObject {
 
             let session = AVCaptureSession()
             session.beginConfiguration()
-            session.sessionPreset = .hd1280x720 
+            
+            switch resolution {
+            case "1080p":
+                session.sessionPreset = .hd1920x1080
+            case "4K":
+                session.sessionPreset = .hd4K3840x2160
+            default:
+                session.sessionPreset = .hd1280x720
+            }
             
             // On s'assure que tout est vierge
             session.inputs.forEach { session.removeInput($0) }
@@ -213,10 +223,19 @@ class NDIManager: NSObject {
                 return
             }
             
+            // Appliquer le Framerate
+            if let activeFormat = device.activeFormat as? AVCaptureDevice.Format {
+                try? device.lockForConfiguration()
+                device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: fps)
+                device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: fps)
+                device.unlockForConfiguration()
+            }
+            
             if session.canAddInput(input) { session.addInput(input) }
             
             let output = AVCaptureVideoDataOutput()
-            output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+            // Utiliser UYVY 4:2:2 pour réduire la bande passante de moitié comparé à BGRA
+            output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_422YpCbCr8]
             output.setSampleBufferDelegate(self, queue: self.captureQueue)
             output.alwaysDiscardsLateVideoFrames = true
             
@@ -436,9 +455,12 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
             var videoFrame = NDIlib_video_frame_v2_t()
             videoFrame.xres = Int32(width)
             videoFrame.yres = Int32(height)
-            videoFrame.FourCC = NDIlib_FourCC_video_type_BGRA
-            videoFrame.frame_rate_N = 30000
-            videoFrame.frame_rate_D = 1001
+            // L'iPhone nous donne du UYVY (422YpCbCr8)
+            videoFrame.FourCC = NDIlib_FourCC_video_type_UYVY
+            
+            // Use currentFps. NDI requires N/D format. 30000/1000 = 30fps.
+            videoFrame.frame_rate_N = self.currentFps * 1000
+            videoFrame.frame_rate_D = 1000
             videoFrame.picture_aspect_ratio = Float(width) / Float(height)
             videoFrame.frame_format_type = NDIlib_frame_format_type_progressive
             videoFrame.timecode = Int64.max

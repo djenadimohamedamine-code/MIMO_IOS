@@ -111,30 +111,47 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   @override
   void initState() {
-    // Ô£à S├ëQUENCEUR DE D├ëMARRAGE ULTRA-ROBUSTE
-    // T+0: L'interface s'affiche (pas d'├®cran noir)
+    super.initState();
+    _setOrientation(_selectedIndex);
+    // ✅ SÉQUENCEUR DE DÉMARRAGE ULTRA-ROBUSTE
+    // T+0: L'interface s'affiche (pas d'écran noir)
     
-    // T+3s: On r├®veille NDI (Le singleton s'initialise au premier acc├¿s)
+    // T+3s: On réveille NDI (Le singleton s'initialise au premier accès)
     Future.delayed(const Duration(seconds: 3), () {
-      _diagLog('­ƒôí Waking up NDI Manager...');
-      _channel.invokeMethod('getSources'); // D├®clenche l'init du singleton si pas encore fait
+      _diagLog('📡 Waking up NDI Manager...');
+      _channel.invokeMethod('getSources'); // Déclenche l'init du singleton si pas encore fait
     });
 
-    // T+6s: On commence ├á scanner les sources
+    // T+6s: On commence à scanner les sources
     Future.delayed(const Duration(seconds: 6), () {
-      _diagLog('­ƒôí Starting Global Scan...');
+      _diagLog('📡 Starting Global Scan...');
       _startGlobalScan();
       _scanTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
         _startGlobalScan();
       });
     });
 
-    // T+9s: On demande les permissions Cam├®ra/Micro (d├®clenche le 2├¿me popup)
-    // On attend 9s pour ├¬tre S├øR que l'utilisateur a eu le temps de valider le R├®seau Local.
+    // T+9s: On demande les permissions Caméra/Micro (déclenche le 2ème popup)
+    // On attend 9s pour être SÛR que l'utilisateur a eu le temps de valider le Réseau Local.
     Future.delayed(const Duration(seconds: 9), () {
-      _diagLog('­ƒöÉ Requesting Permissions (Camera/Mic)...');
+      _diagLog('🔐 Requesting Permissions (Camera/Mic)...');
       _requestPermissions();
     });
+  }
+
+  void _setOrientation(int index) {
+    if (index == 3) {
+      // Régie Mobile -> Force Landscape
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    } else if (index == 0 || index == 1 || index == 2 || index == 4 || index == 5) {
+      // Others -> Force Portrait
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+      ]);
+    }
   }
 
   @override
@@ -150,7 +167,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       final List<dynamic>? result = await _channel.invokeMethod('getSources');
       if (mounted && result != null) {
         final List<String> newSources = result.cast<String>();
-        // On ne fait le setState que si la liste change pour ├®viter de clignoter
+        // On ne fait le setState que si la liste change pour éviter de clignoter
         if (newSources.length != _sources.length || 
             !newSources.every((s) => _sources.contains(s))) {
           setState(() {
@@ -164,15 +181,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 
-  final List<String> _titles = ["Reception Flux", "Transmettre Camera", "Multiview 4", "Regie Mobile", "LivePanel Officiel", "Midas M32"];
+  final List<String> _titles = ["Reception Flux", "Transmettre Camera", "Multiview 4", "Regie Mobile", "Midas M32"];
 
   List<Widget> get _pages => [
         _selectedIndex == 0 ? NdiReceiveScreen(sources: _sources, isScanning: _isScanning, onRefresh: _startGlobalScan) : const SizedBox.shrink(),
         _selectedIndex == 1 ? const NdiSendScreen() : const SizedBox.shrink(),
         _selectedIndex == 2 ? MultiviewScreen(sources: _sources) : const SizedBox.shrink(),
         _selectedIndex == 3 ? SwitcherScreen(sources: _sources, onRefresh: _startGlobalScan) : const SizedBox.shrink(),
-        _selectedIndex == 4 ? const LivePanelScreen() : const SizedBox.shrink(),
-        _selectedIndex == 5 ? const MidasM32Screen() : const SizedBox.shrink(),
+        _selectedIndex == 4 ? const MidasM32Screen() : const SizedBox.shrink(),
       ];
 
   @override
@@ -189,31 +205,33 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           onPressed: () => _showDiagnosticConsole(context),
           child: const Icon(Icons.bug_report, size: 18),
         ),
-        appBar: AppBar(
-          backgroundColor: Colors.black.withOpacity(0.3),
-          elevation: 0,
-          flexibleSpace: ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-              child: Container(color: Colors.transparent),
+        appBar: _selectedIndex == 3 
+          ? null // Hide AppBar in Switcher Screen to maximize space for buttons
+          : AppBar(
+              backgroundColor: Colors.black.withOpacity(0.3),
+              elevation: 0,
+              flexibleSpace: ClipRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                  child: Container(color: Colors.transparent),
+                ),
+              ),
+              title: Text(_titles[_selectedIndex],
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+              centerTitle: true,
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.settings, color: Colors.white70),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                    );
+                  },
+                ),
+              ],
             ),
-          ),
-          title: Text(_titles[_selectedIndex],
-              style: const TextStyle(
-                  fontWeight: FontWeight.bold, letterSpacing: 1.2)),
-          centerTitle: true,
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.settings, color: Colors.white70),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
-                );
-              },
-            ),
-          ],
-        ),
         drawer: _buildDrawer(),
         body: IndexedStack(
           index: _selectedIndex,
@@ -234,17 +252,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               image: DecorationImage(
                 image: AssetImage('IMG_0730.JPG'),
                 fit: BoxFit.cover,
+                alignment: Alignment.topCenter, // ✅ Baissé pour montrer la tête
                 colorFilter:
                     ColorFilter.mode(Colors.black38, BlendMode.darken),
               ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.end, // ✅ Pousse le texte vers le bas
               children: const [
-                CircleAvatar(
-                    radius: 30,
-                    backgroundImage: AssetImage('IMG_0730.JPG')),
-                SizedBox(height: 10),
+                // CircleAvatar supprimé comme demandé
                 Text('MIMO_NDI',
                     style: TextStyle(
                         color: Colors.white,
@@ -260,8 +277,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           _drawerItem(1, Icons.videocam, 'Transmettre Camera'),
           _drawerItem(2, Icons.grid_view, 'Multiview 4'),
           _drawerItem(3, Icons.cut, 'Regie Mobile'),
-          _drawerItem(4, Icons.language, 'LivePanel Officiel'),
-          _drawerItem(5, Icons.graphic_eq, 'Midas M32'),
+          _drawerItem(4, Icons.graphic_eq, 'Midas M32'),
           const Divider(color: Colors.white24),
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.orangeAccent),
@@ -276,17 +292,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ),
           ListTile(
             leading: const Icon(Icons.settings, color: Colors.blueAccent),
-            title: const Text('Param├¿tres'),
+            title: const Text('Paramètres'),
             onTap: () {
               Navigator.pop(context); // Close drawer
               Navigator.pushNamed(context, '/settings');
             },
-          ),
-          ListTile(
-            leading:
-                const Icon(Icons.info_outline, color: Colors.white70),
-            title: const Text('├Ç propos'),
-            onTap: () {},
           ),
         ],
       ),
@@ -304,6 +314,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           style: TextStyle(
               color: isSelected ? Colors.greenAccent : Colors.white)),
       onTap: () {
+        _setOrientation(index);
         setState(() => _selectedIndex = index);
         Navigator.pop(context);
       },
@@ -788,16 +799,117 @@ class _NdiSendScreenState extends State<NdiSendScreen> {
   static const _channel = MethodChannel('com.antigravity/ndi');
   bool _isSending = false;
   String _sourceName = 'MIMO_NDI Camera';
+  String _sendResolution = "720p";
+  int _sendFps = 30;
 
   @override
   void initState() {
     super.initState();
-    // Ô£à On attend 5 secondes avant d'allumer la cam├®ra pour laisser passer 
-    // les pop-ups de permissions et ├®viter un Deadlock iOS
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _sendResolution = prefs.getString('send_res') ?? "720p";
+      _sendFps = prefs.getInt('send_fps') ?? 30;
+    });
+    // On attend 5 secondes avant d'allumer la caméra pour laisser passer 
+    // les pop-ups de permissions et éviter un Deadlock iOS
     Future.delayed(const Duration(seconds: 5), () {
       if (mounted) {
-        _channel.invokeMethod('setupCamera');
+        _channel.invokeMethod('setupCamera', {
+          'resolution': _sendResolution,
+          'fps': _sendFps
+        });
       }
+    });
+  }
+
+  void _showSettingsMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.95),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border.all(color: Colors.white24, width: 1),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('⚙️ RÉGLAGES CAMÉRA BROADCAST', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            const Text('⚠️ ATTENTION : Les résolutions 1080p et 4K ou les FPS élevés exigent un réseau Wi-Fi parfait ou un adaptateur Ethernet. Risque de surchauffe ou saccades si le réseau est faible.', style: TextStyle(color: Colors.orangeAccent, fontSize: 11)),
+            const SizedBox(height: 20),
+            
+            const Text('RÉSOLUTION', style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildOptionBtn('720p', '720p', _sendResolution, (v) => _updateSettings(res: v)),
+                _buildOptionBtn('1080p', '1080p', _sendResolution, (v) => _updateSettings(res: v)),
+                _buildOptionBtn('4K', '4K', _sendResolution, (v) => _updateSettings(res: v)),
+              ],
+            ),
+            const SizedBox(height: 20),
+            
+            const Text('FRÉQUENCE (FPS)', style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildOptionBtn('24 fps', 24, _sendFps, (v) => _updateSettings(fps: v)),
+                _buildOptionBtn('30 fps', 30, _sendFps, (v) => _updateSettings(fps: v)),
+                _buildOptionBtn('60 fps', 60, _sendFps, (v) => _updateSettings(fps: v)),
+              ],
+            ),
+            const SizedBox(height: 30),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOptionBtn(String label, dynamic value, dynamic currentValue, Function(dynamic) onTap) {
+    bool isSelected = value == currentValue;
+    return GestureDetector(
+      onTap: () {
+        onTap(value);
+        Navigator.pop(context);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blueAccent : Colors.white10,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: isSelected ? Colors.white : Colors.transparent),
+        ),
+        child: Text(label, style: TextStyle(color: isSelected ? Colors.white : Colors.white70, fontWeight: FontWeight.bold, fontSize: 12)),
+      ),
+    );
+  }
+
+  Future<void> _updateSettings({String? res, int? fps}) async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      if (res != null) {
+        _sendResolution = res;
+        prefs.setString('send_res', res);
+      }
+      if (fps != null) {
+        _sendFps = fps;
+        prefs.setInt('send_fps', fps);
+      }
+    });
+    // Relancer la caméra avec les nouveaux settings
+    _channel.invokeMethod('setupCamera', {
+      'resolution': _sendResolution,
+      'fps': _sendFps
     });
   }
 
@@ -899,6 +1011,23 @@ class _NdiSendScreenState extends State<NdiSendScreen> {
                           ),
                         ),
                       ),
+                      
+                    // Engrenage Settings
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: GestureDetector(
+                        onTap: _showSettingsMenu,
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: const BoxDecoration(
+                            color: Colors.black54,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.settings, color: Colors.white, size: 24),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -1311,12 +1440,12 @@ class SwitcherScreen extends StatefulWidget {
   State<SwitcherScreen> createState() => _SwitcherScreenState();
 }
 
-enum SwitcherMode { local, relay, api }
+enum SwitcherMode { relay, api }
 
 class _SwitcherScreenState extends State<SwitcherScreen> {
   static const _channel = MethodChannel('com.antigravity/ndi');
   int? _activeIndex;
-  SwitcherMode _mode = SwitcherMode.local; 
+  SwitcherMode _mode = SwitcherMode.api; 
   String _tricasterIp = "192.168.1.100";
   bool _isTricasterRecording = false;
   double _audioVolume = 0.50; // default 50%
@@ -1610,15 +1739,7 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
               color: Colors.black,
               child: Row(
                 children: [
-                  Expanded(
-                    child: _ModeButton(
-                      title: 'LOCAL',
-                      icon: Icons.wifi,
-                      isSelected: _mode == SwitcherMode.local,
-                      onTap: () => _changeMode(SwitcherMode.local),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
+
                   Expanded(
                     child: _ModeButton(
                       title: 'RELAY',
@@ -1639,9 +1760,9 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
                 ],
               ),
             ),
-            // ─┬─ COMMANDES PRINCIPALES (REC & AUDIO)
+            // ─┬─ COMMANDES COMPACTES (REC, TAKE, AUTO, AUDIO)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 children: [
                   // REC Button
@@ -1649,34 +1770,62 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
                     onTap: _toggleTricasterRecord,
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 300),
-                      width: 80, height: 80,
+                      width: 50, height: 50,
                       decoration: BoxDecoration(
                         gradient: _isTricasterRecording 
                             ? const RadialGradient(colors: [Color(0xFFFF5252), Color(0xFFD50000)]) 
                             : RadialGradient(colors: [Colors.white.withOpacity(0.1), Colors.white.withOpacity(0.05)]),
                         shape: BoxShape.circle,
-                        border: Border.all(color: _isTricasterRecording ? Colors.redAccent : Colors.white24, width: 3),
+                        border: Border.all(color: _isTricasterRecording ? Colors.redAccent : Colors.white24, width: 2),
                         boxShadow: _isTricasterRecording 
-                            ? [BoxShadow(color: Colors.red.withOpacity(0.6), blurRadius: 20, spreadRadius: 2)] 
+                            ? [BoxShadow(color: Colors.red.withOpacity(0.6), blurRadius: 10, spreadRadius: 1)] 
                             : [],
                       ),
                       child: Center(
                         child: Text('REC', style: TextStyle(
                           color: _isTricasterRecording ? Colors.white : Colors.white70, 
                           fontWeight: FontWeight.w900, 
-                          fontSize: 14,
+                          fontSize: 12,
                         )),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 20),
-                  // Audio Controls
+                  const SizedBox(width: 12),
+                  
+                  // TAKE
                   Expanded(
+                    flex: 2,
+                    child: _buildActionButton(
+                      label: 'TAKE',
+                      icon: Icons.cut,
+                      color: Colors.orange,
+                      isActive: _isTakeActive,
+                      onTap: _take,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  
+                  // AUTO
+                  Expanded(
+                    flex: 2,
+                    child: _buildActionButton(
+                      label: 'AUTO',
+                      icon: Icons.auto_awesome,
+                      color: Colors.blueAccent,
+                      isActive: _isAutoActive,
+                      onTap: _auto,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+
+                  // Audio Controls Compact
+                  Expanded(
+                    flex: 3,
                     child: Container(
-                      padding: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.05),
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: Colors.white12),
                       ),
                       child: Row(
@@ -1685,70 +1834,38 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
                             onTap: _toggleMute,
                             child: AnimatedContainer(
                               duration: const Duration(milliseconds: 200),
-                              padding: const EdgeInsets.all(12),
+                              padding: const EdgeInsets.all(8),
                               decoration: BoxDecoration(
                                 color: _isAudioMuted ? Colors.redAccent : Colors.white10,
                                 shape: BoxShape.circle,
                               ),
                               child: Icon(_isAudioMuted ? Icons.volume_off : Icons.volume_up, 
-                                  color: Colors.white, size: 24),
+                                  color: Colors.white, size: 20),
                             ),
                           ),
                           Expanded(
-                            child: Column(
-                               mainAxisSize: MainAxisSize.min,
-                               children: [
-                                 SliderTheme(
-                                    data: SliderTheme.of(context).copyWith(
-                                      trackHeight: 12,
-                                      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 12),
-                                      activeTrackColor: Colors.cyanAccent,
-                                      inactiveTrackColor: Colors.white10,
-                                      thumbColor: Colors.white,
-                                    ),
-                                    child: Slider(
-                                      value: _audioVolume,
-                                      min: 0.0,
-                                      max: 1.0,
-                                      onChanged: _setAudioVolume,
-                                    ),
-                                 ),
-                                 Text('VOLUME MASTER: ${(_audioVolume * 100).toInt()}%', 
-                                    style: const TextStyle(color: Colors.cyanAccent, fontSize: 10, fontWeight: FontWeight.bold)),
-                               ],
+                            child: SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 8,
+                                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10),
+                                activeTrackColor: Colors.cyanAccent,
+                                inactiveTrackColor: Colors.white10,
+                                thumbColor: Colors.white,
+                              ),
+                              child: Slider(
+                                value: _audioVolume,
+                                min: 0.0,
+                                max: 1.0,
+                                onChanged: _setAudioVolume,
+                              ),
                             ),
                           ),
                         ],
                       ),
                     ),
                   ),
-                ],
-              ),
-            ),
-
-            // ÔöÇÔöÇ TRANSITIONS AE2 (Take / Auto)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _buildActionButton(
-                      label: 'TAKE',
-                      icon: Icons.cut,
-                      color: Colors.orange,
-                      onTap: _take,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _buildActionButton(
-                      label: 'AUTO',
-                      icon: Icons.auto_awesome,
-                      color: Colors.blueAccent,
-                      onTap: _auto,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
+                  
+                  const SizedBox(width: 8),
                   IconButton(
                     onPressed: _showDictionary,
                     icon: const Icon(Icons.menu_book, color: Colors.white24, size: 24),
@@ -1768,6 +1885,7 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
                       _buildMiniButton('DDR1 ▶', () => _tricasterCall('ddr1_play&value=1'), Colors.purple),
                       _buildMiniButton('DDR1 ⏹', () => _tricasterCall('ddr1_stop&value=1'), Colors.deepPurple),
                       _buildMiniButton('DDR2 ▶', () => _tricasterCall('ddr2_play&value=1'), Colors.purple),
+                      _buildMiniButton('DDR2 ⏹', () => _tricasterCall('ddr2_stop&value=1'), Colors.deepPurple),
                       _buildMiniButton('DSK 1 AUTO', () => _tricasterCall('dsk1_auto&value=1'), Colors.cyan),
                       _buildMiniButton('DSK 2 AUTO', () => _tricasterCall('dsk2_auto&value=1'), Colors.cyan),
                       _buildMiniButton('📷 GRAB', () => _tricasterCall('record_grab&value=1'), Colors.teal),
@@ -1918,19 +2036,7 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
   }
 
   Widget _buildMiniButton(String label, VoidCallback onTap, Color color) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(right: 8),
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-        decoration: BoxDecoration(
-          color: const Color(0xFF2B2D32),
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: color.withOpacity(0.3), width: 1),
-        ),
-        child: Text(label, style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-      ),
-    );
+    return _MiniButtonWidget(label: label, onTap: onTap, color: color);
   }
 
   Widget _buildCamButton(int i, bool isProgramRow) {
@@ -1992,6 +2098,56 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
     );
   }
 }
+
+class _MiniButtonWidget extends StatefulWidget {
+  final String label;
+  final VoidCallback onTap;
+  final Color color;
+  const _MiniButtonWidget({required this.label, required this.onTap, required this.color});
+
+  @override
+  _MiniButtonWidgetState createState() => _MiniButtonWidgetState();
+}
+
+class _MiniButtonWidgetState extends State<_MiniButtonWidget> {
+  bool _isActive = false;
+
+  void _handleTap() {
+    setState(() => _isActive = true);
+    widget.onTap();
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (mounted) setState(() => _isActive = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: _handleTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
+        margin: const EdgeInsets.only(right: 8),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+        decoration: BoxDecoration(
+          color: _isActive ? widget.color : const Color(0xFF2B2D32),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+              color: _isActive ? Colors.white : widget.color.withOpacity(0.3),
+              width: _isActive ? 2 : 1),
+          boxShadow: _isActive
+              ? [BoxShadow(color: widget.color.withOpacity(0.6), blurRadius: 10, spreadRadius: 1)]
+              : [],
+        ),
+        child: Text(widget.label,
+            style: TextStyle(
+                color: _isActive ? Colors.black : Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 13)),
+      ),
+    );
+  }
+}
+
 
 // ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 // ­ƒîÉ LIVE PANEL OFFICIEL - WEBVIEW
