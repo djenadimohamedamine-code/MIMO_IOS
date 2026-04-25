@@ -1,0 +1,137 @@
+name: MIMO_NDI_SUNLIGHT_BUILD
+on:
+  push:
+    branches: [ "sunlight", "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build_ios:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+
+      - name: Backup_iOS_Files
+        run: |
+          cp pubspec.yaml pubspec.yaml.bak
+          cp -r lib lib.bak
+          cp -r ios/Runner ios/Runner.bak
+
+      - name: Create_Project
+        run: flutter create --project-name=mimo_ndi --platforms=ios .
+
+      - name: Restore_iOS_Files
+        run: |
+          cp pubspec.yaml.bak pubspec.yaml
+          cp -r lib.bak/. lib/
+          cp -r ios/Runner.bak/. ios/Runner/
+
+      - name: Fetch_NDI
+        run: |
+          brew install p7zip
+          mkdir -p ios/NDISDK/lib/
+          mkdir -p ios/NDISDK/include/
+          cd ios
+          curl -L "https://github.com/djenadimohamedamine-code/MIMO_IOS/releases/download/v1.0.1-stable/libndi_ios.zip" -o "libndi_ios.zip"
+          curl -L "https://github.com/djenadimohamedamine-code/MIMO_IOS/releases/download/v1.0.1-stable/include.7z" -o "include.7z"
+          unzip -o libndi_ios.zip -d temp_lib
+          find temp_lib -name "*.a" -exec cp {} NDISDK/lib/libndi_ios.a \;
+          7z x include.7z -oNDISDK/include/ -y
+
+      - name: Deps
+        run: |
+          flutter config --enable-ios
+          flutter clean
+          flutter pub get
+
+      - name: Xcode_Config
+        run: |
+          sudo gem install xcodeproj
+          cd ios
+          ruby configure_xcode.rb
+
+      - name: Pods
+        run: |
+          cd ios
+          for i in 1 2 3 4 5; do
+            echo "Tentative $i pour pod install..."
+            pod install --repo-update && break || sleep 15
+          done
+
+      - name: Build_iOS
+        run: |
+          flutter build ios --release --no-codesign --verbose \
+            --dart-define=FLUTTER_XCODE_SWIFT_TREAT_WARNINGS_AS_ERRORS=NO
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -r MIMO_NDI_SUNLIGHT.ipa Payload
+
+      - name: Upload_iOS
+        uses: actions/upload-artifact@v4
+        with:
+          name: mimo-ndi-sunlight-ipa
+          path: build/ios/iphoneos/MIMO_NDI_SUNLIGHT.ipa
+
+  build_android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup_Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+
+      - name: Backup_Android_Files
+        run: |
+          cp pubspec.yaml pubspec.yaml.bak
+          cp -r lib lib.bak
+          cp -r android/app/src/main android/app/src/main.bak
+          cp -r android/gradle/wrapper android/gradle/wrapper.bak
+          cp android/app/build.gradle android/app/build.gradle.bak
+          cp android/build.gradle android/build.gradle.bak
+          cp android/settings.gradle android/settings.gradle.bak
+
+      - name: Create_Project
+        run: flutter create --project-name=mimo_ndi --platforms=android .
+
+      - name: Restore_Android_Files
+        run: |
+          cp pubspec.yaml.bak pubspec.yaml
+          cp -r lib.bak/. lib/
+          cp -r android/app/src/main.bak/. android/app/src/main/
+          cp -r android/gradle/wrapper.bak/. android/gradle/wrapper/
+          cp android/app/build.gradle.bak android/app/build.gradle
+          cp android/build.gradle.bak android/build.gradle
+          cp android/settings.gradle.bak android/settings.gradle
+
+      - name: Deps
+        run: |
+          flutter config --enable-android
+          flutter clean
+          flutter pub get
+
+      - name: Build_Android
+        run: |
+          flutter build apk --release --obfuscate --split-debug-info=build/app/outputs/symbols
+
+      - name: Upload_Android
+        uses: actions/upload-artifact@v4
+        with:
+          name: mimo-ndi-sunlight-apk
+          path: build/app/outputs/flutter-apk/app-release.apk

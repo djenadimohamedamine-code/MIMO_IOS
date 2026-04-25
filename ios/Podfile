@@ -1,0 +1,46 @@
+# Uncomment this line to define a global platform for your project
+platform :ios, '13.0'
+
+# Flutter Google Analytics logic
+ENV['COCOAPODS_DISABLE_STATS'] = '1'
+
+project 'Runner'
+
+def flutter_root
+  generated_flutter_build_config_file = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated_flutter_build_config_file)
+    raise "#{generated_flutter_build_config_file} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+  end
+
+  File.foreach(generated_flutter_build_config_file).with_index do |line, index|
+    prefix = 'FLUTTER_ROOT='
+    next unless line.start_with?(prefix)
+    return line[prefix.length..-1].strip
+  end
+end
+
+load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
+
+target 'Runner' do
+  use_frameworks!
+  use_modular_headers!
+
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
+      config.build_settings['ENABLE_BITCODE'] = 'NO'
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+      # Indispensable pour que le Linker trouve tous les symboles sur GitHub Actions
+      config.build_settings['ONLY_ACTIVE_ARCH'] = 'NO'
+      # Suppression des erreurs sur les warnings (indispensable pour cloud_firestore)
+      config.build_settings['GCC_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
+      config.build_settings['SWIFT_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
+      # Suggestion for Apple Silicon Macs (Simulator)
+      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
+    end
+  end
+end
