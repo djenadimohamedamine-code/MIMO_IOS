@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
 
 // ──────────────────────────────────────────────────────────
 // PROTOCOLE NICOLAUDIE UDP (Port 2430)
@@ -49,7 +50,45 @@ class SunlightApi {
   Future<void> playScene(int sceneNumber) async {
     final x = sceneNumber % 256;
     final y = sceneNumber ~/ 256;
+    
+    // 1. Envoi UDP (Nicolaudie)
     await _sendUdp([1, x, y, 255]);
+
+    // 2. Envoi HTTP (Fallback)
+    try {
+      final url = Uri.parse('http://$ipAddress:8080/api/scene/call/$sceneNumber');
+      http.get(url).timeout(const Duration(milliseconds: 500));
+    } catch (_) {}
+
+    // 3. Envoi OSC (Port 7000 - Nouveau !)
+    await _sendOsc("/button/$sceneNumber");
+  }
+
+  /// Formatage et envoi d'un message OSC simple (sans argument)
+  Future<void> _sendOsc(String address) async {
+    RawDatagramSocket? socket;
+    try {
+      socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+      
+      // Construction manuelle du paquet OSC simple (Adresse + ,)
+      // On doit aligner sur 4 octets
+      List<int> packet = [];
+      packet.addAll(utf8.encode(address));
+      packet.add(0);
+      while (packet.length % 4 != 0) { packet.add(0); }
+      
+      packet.addAll(utf8.encode(","));
+      packet.add(0);
+      while (packet.length % 4 != 0) { packet.add(0); }
+
+      socket.send(packet, InternetAddress(ipAddress), 7000);
+      print("🎭 Sunlite OSC → $ipAddress:7000 [$address]");
+    } catch (e) {
+      print("❌ OSC Error: $e");
+    } finally {
+      await Future.delayed(const Duration(milliseconds: 10));
+      socket?.close();
+    }
   }
 
   /// Arrête une scène
@@ -158,6 +197,14 @@ class _SunlightScreenState extends State<SunlightScreen> {
     });
   }
 
+  Future<void> _updateIp(String newIp) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('sunlight_ip', newIp);
+    setState(() {
+      _api = SunlightApi(ipAddress: newIp);
+    });
+  }
+
   void _playScene(SunliteScene scene) {
     setState(() => _activeScene = scene.sceneNumber);
     _api.playScene(scene.sceneNumber);
@@ -166,7 +213,7 @@ class _SunlightScreenState extends State<SunlightScreen> {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('⚡ Commande envoyée : ${scene.name} (IP: ${_api.ipAddress})'),
+        content: Text('⚡ Commande (UDP+HTTP) : ${scene.name} -> ${_api.ipAddress}'),
         duration: const Duration(milliseconds: 800),
         backgroundColor: Colors.blueAccent.withOpacity(0.9),
         behavior: SnackBarBehavior.floating,
@@ -195,34 +242,38 @@ class _SunlightScreenState extends State<SunlightScreen> {
       color: const Color(0xFF0F1115),
       child: Column(
         children: [
-          // ── Header ──
+          // Header avec IP modifiable
           Container(
-            color: Colors.black,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.blueAccent.withOpacity(0.05),
+              border: Border(bottom: BorderSide(color: Colors.blueAccent.withOpacity(0.1))),
+            ),
             child: Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: Colors.amber.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8),
+                const Icon(Icons.settings_ethernet, color: Colors.blueAccent, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("IP SUNLITE PC", style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.grey)),
+                      TextField(
+                        controller: TextEditingController(text: _api.ipAddress),
+                        style: const TextStyle(fontSize: 15, color: Colors.white, fontWeight: FontWeight.bold),
+                        decoration: const InputDecoration(isDense: true, border: InputBorder.none, hintText: "Ex: 192.168.1.65"),
+                        onSubmitted: (val) => _updateIp(val),
+                      ),
+                    ],
                   ),
-                  child: const Icon(Icons.wb_sunny, color: Colors.amber, size: 18),
                 ),
-                const SizedBox(width: 10),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "SUNLITE SUITE 3",
-                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 2),
-                    ),
-                    Text(
-                      "${_api.ipAddress}  ·  UDP Port ${_api.port}",
-                      style: const TextStyle(color: Colors.white38, fontSize: 10),
-                    ),
-                  ],
-                ),
+                TextButton(
+                  onPressed: () => _updateIp(_api.ipAddress),
+                  child: const Text("OK", style: TextStyle(color: Colors.blueAccent)),
+                )
+              ],
+            ),
+          ),
                 const Spacer(),
                 // Bouton RESET global
                 GestureDetector(
