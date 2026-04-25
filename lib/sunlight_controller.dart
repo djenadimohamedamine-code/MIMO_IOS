@@ -18,11 +18,15 @@ class SunlightApi {
     RawDatagramSocket? socket;
     try {
       socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+      // Disable broadcast if not needed, or ensure it's allowed
+      socket.broadcastEnabled = true; 
       socket.send(bytes, InternetAddress(ipAddress), port);
       print("☀️ Sunlite UDP → $ipAddress:$port  [${bytes.join(', ')}]");
     } catch (e) {
       print("❌ Sunlite UDP Error: $e");
     } finally {
+      // Small delay to ensure packet is out before closing
+      await Future.delayed(const Duration(milliseconds: 10));
       socket?.close();
     }
   }
@@ -143,6 +147,17 @@ class _SunlightScreenState extends State<SunlightScreen> {
   void _playScene(SunliteScene scene) {
     setState(() => _activeScene = scene.sceneNumber);
     _api.playScene(scene.sceneNumber);
+    
+    // Feedback visuel
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('⚡ Commande envoyée : ${scene.name} (IP: ${_api.ipAddress})'),
+        duration: const Duration(milliseconds: 800),
+        backgroundColor: Colors.blueAccent.withOpacity(0.9),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   void _stopScene(SunliteScene scene) {
