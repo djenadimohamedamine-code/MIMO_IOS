@@ -140,13 +140,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   void _setOrientation(int index) {
-    if (index == 3) {
+    if (index == 4) {
       // Régie Mobile -> Force Landscape
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.landscapeLeft,
         DeviceOrientation.landscapeRight,
       ]);
-    } else if (index == 0 || index == 1 || index == 2 || index == 4 || index == 5) {
+    } else {
       // Others -> Force Portrait
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.portraitUp,
@@ -181,14 +181,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 
-  final List<String> _titles = ["Reception Flux", "Transmettre Camera", "Multiview 4", "Regie Mobile", "Midas M32"];
+  final List<String> _titles = ["LivePanel Officiel", "Reception Flux", "Transmettre Camera", "Multiview 4", "Regie Mobile", "Midas M32", "À propos"];
 
   List<Widget> get _pages => [
-        _selectedIndex == 0 ? NdiReceiveScreen(sources: _sources, isScanning: _isScanning, onRefresh: _startGlobalScan) : const SizedBox.shrink(),
-        _selectedIndex == 1 ? const NdiSendScreen() : const SizedBox.shrink(),
-        _selectedIndex == 2 ? MultiviewScreen(sources: _sources) : const SizedBox.shrink(),
-        _selectedIndex == 3 ? SwitcherScreen(sources: _sources, onRefresh: _startGlobalScan) : const SizedBox.shrink(),
-        _selectedIndex == 4 ? const MidasM32Screen() : const SizedBox.shrink(),
+        _selectedIndex == 0 ? const LivePanelScreen() : const SizedBox.shrink(),
+        _selectedIndex == 1 ? NdiReceiveScreen(sources: _sources, isScanning: _isScanning, onRefresh: _startGlobalScan) : const SizedBox.shrink(),
+        _selectedIndex == 2 ? const NdiSendScreen() : const SizedBox.shrink(),
+        _selectedIndex == 3 ? MultiviewScreen(sources: _sources) : const SizedBox.shrink(),
+        _selectedIndex == 4 ? SwitcherScreen(sources: _sources, onRefresh: _startGlobalScan) : const SizedBox.shrink(),
+        _selectedIndex == 5 ? const MidasM32Screen() : const SizedBox.shrink(),
+        _selectedIndex == 6 ? const AboutScreen() : const SizedBox.shrink(),
       ];
 
   @override
@@ -273,11 +275,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               ],
             ),
           ),
-          _drawerItem(0, Icons.download, 'Recevoir Flux'),
-          _drawerItem(1, Icons.videocam, 'Transmettre Camera'),
-          _drawerItem(2, Icons.grid_view, 'Multiview 4'),
-          _drawerItem(3, Icons.cut, 'Regie Mobile'),
-          _drawerItem(4, Icons.graphic_eq, 'Midas M32'),
+          _drawerItem(0, Icons.dashboard, 'LivePanel Officiel'),
+          _drawerItem(1, Icons.download, 'Recevoir Flux'),
+          _drawerItem(2, Icons.videocam, 'Transmettre Camera'),
+          _drawerItem(3, Icons.grid_view, 'Multiview 4'),
+          _drawerItem(4, Icons.cut, 'Regie Mobile'),
+          _drawerItem(5, Icons.graphic_eq, 'Midas M32'),
+          _drawerItem(6, Icons.info_outline, 'À propos'),
           const Divider(color: Colors.white24),
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.orangeAccent),
@@ -2191,10 +2195,17 @@ class _LivePanelScreenState extends State<LivePanelScreen> {
       });
     }
 
-    // Ô£à D├®lai de 3 secondes pour laisser l'app se stabiliser
-    Future.delayed(const Duration(seconds: 3), () {
+    // ✅ Chargement intelligent de l'URL (IP ou URL complète)
+    String url = _targetIp;
+    if (!url.startsWith('http')) {
+      url = 'http://$url';
+    }
+    
+    _diagLog('🌐 LivePanel Loading: $url');
+
+    Future.delayed(const Duration(seconds: 2), () {
       if (mounted) {
-        _controller.loadRequest(Uri.parse('http://$_targetIp/'));
+        _controller.loadRequest(Uri.parse(url));
       }
     });
   }
@@ -2366,6 +2377,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
               contentPadding: const EdgeInsets.symmetric(vertical: 18),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// ℹ️ ÉCRAN À PROPOS
+// ─────────────────────────────────────────────────────────────────────────────────────────
+class AboutScreen extends StatelessWidget {
+  const AboutScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.info_outline, size: 80, color: Colors.blueAccent),
+          ),
+          const SizedBox(height: 24),
+          const Text('MIMO_NDI', 
+            style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, letterSpacing: 2)),
+          const Text('Professional Broadcast Suite', 
+            style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.w500)),
+          const SizedBox(height: 40),
+          const Text('Version 2.5.0', style: TextStyle(color: Colors.white54)),
+          const SizedBox(height: 8),
+          const Text('© 2026 MIMO Production', style: TextStyle(color: Colors.white24, fontSize: 12)),
+          const SizedBox(height: 60),
+          const Text('Developed for high-performance NDI workflow', 
+            style: TextStyle(color: Colors.white10, fontSize: 10, fontStyle: FontStyle.italic)),
         ],
       ),
     );

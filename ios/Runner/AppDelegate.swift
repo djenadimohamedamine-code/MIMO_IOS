@@ -48,7 +48,9 @@ import Flutter
             } else if call.method == "setupCamera" {
                 let args = call.arguments as? [String: Any]
                 let res = args?["resolution"] as? String ?? "720p"
-                let fps = args?["fps"] as? Int32 ?? 30
+                // ✅ Correction du cast Int32 (Flutter envoie du Int 64-bit)
+                let fpsRaw = args?["fps"] as? Int ?? 30
+                let fps = Int32(fpsRaw)
                 NDIManager.shared.setupCamera(resolution: res, fps: fps)
                 result(true)
             } else {

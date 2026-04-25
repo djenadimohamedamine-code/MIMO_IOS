@@ -203,12 +203,21 @@ class NDIManager: NSObject {
             let session = AVCaptureSession()
             session.beginConfiguration()
             
+            var preset: AVCaptureSession.Preset = .hd1280x720
             switch resolution {
             case "1080p":
-                session.sessionPreset = .hd1920x1080
+                preset = .hd1920x1080
             case "4K":
-                session.sessionPreset = .hd4K3840x2160
+                preset = .hd4K3840x2160
             default:
+                preset = .hd1280x720
+            }
+            
+            // ✅ Vérification de compatibilité du Preset pour éviter le crash
+            if session.canSetSessionPreset(preset) {
+                session.sessionPreset = preset
+            } else {
+                print("⚠️ Preset \(resolution) non supporté, repli sur 720p")
                 session.sessionPreset = .hd1280x720
             }
             
@@ -223,13 +232,21 @@ class NDIManager: NSObject {
                 return
             }
             
-            // Appliquer le Framerate
-            if let activeFormat = device.activeFormat as? AVCaptureDevice.Format {
-                try? device.lockForConfiguration()
-                device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: fps)
-                device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: fps)
-                device.unlockForConfiguration()
+            // ✅ Appliquer le Framerate (Sécurisé)
+            try? device.lockForConfiguration()
+            let ranges = device.activeFormat.videoSupportedFrameRateRanges
+            var bestRange = ranges.first
+            for range in ranges {
+                if Double(fps) >= range.minFrameRate && Double(fps) <= range.maxFrameRate {
+                    bestRange = range; break
+                }
             }
+            
+            if let range = bestRange {
+                device.activeVideoMinFrameDuration = range.minFrameDuration
+                device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: fps)
+            }
+            device.unlockForConfiguration()
             
             if session.canAddInput(input) { session.addInput(input) }
             
@@ -450,7 +467,11 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
             let width = CVPixelBufferGetWidth(pixelBuffer)
             let height = CVPixelBufferGetHeight(pixelBuffer)
             let stride = CVPixelBufferGetBytesPerRow(pixelBuffer)
-            let data = CVPixelBufferGetBaseAddress(pixelBuffer)
+            
+            guard let data = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+                CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+                return
+            }
 
             var videoFrame = NDIlib_video_frame_v2_t()
             videoFrame.xres = Int32(width)
@@ -463,9 +484,9 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
             videoFrame.frame_rate_D = 1000
             videoFrame.picture_aspect_ratio = Float(width) / Float(height)
             videoFrame.frame_format_type = NDIlib_frame_format_type_progressive
-            videoFrame.timecode = Int64.max
+            videoFrame.timecode = NDIlib_send_timecode_synthesize
             videoFrame.line_stride_in_bytes = Int32(stride)
-            videoFrame.p_data = data?.bindMemory(to: UInt8.self, capacity: stride * height)
+            videoFrame.p_data = data.bindMemory(to: UInt8.self, capacity: stride * height)
 
             NDIlib_send_send_video_v2(send, &videoFrame)
             CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
