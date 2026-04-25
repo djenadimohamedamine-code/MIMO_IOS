@@ -207,8 +207,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           onPressed: () => _showDiagnosticConsole(context),
           child: const Icon(Icons.bug_report, size: 18),
         ),
-        appBar: _selectedIndex == 3 
-          ? null // Hide AppBar in Switcher Screen to maximize space for buttons
+        appBar: (_selectedIndex == 3 || _selectedIndex == 4)
+          ? null // Hide AppBar in Fullscreen tools
           : AppBar(
               backgroundColor: Colors.black.withOpacity(0.3),
               elevation: 0,
@@ -235,9 +235,28 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               ],
             ),
         drawer: _buildDrawer(),
-        body: IndexedStack(
-          index: _selectedIndex,
-          children: _pages,
+        body: Stack(
+          children: [
+            IndexedStack(
+              index: _selectedIndex,
+              children: _pages,
+            ),
+            if (_selectedIndex == 3 || _selectedIndex == 4)
+              Positioned(
+                top: 10,
+                left: 10,
+                child: Builder(
+                  builder: (context) => IconButton(
+                    icon: const Icon(Icons.menu, color: Colors.white, size: 28),
+                    onPressed: () => Scaffold.of(context).openDrawer(),
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.black54,
+                      padding: const EdgeInsets.all(12),
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
