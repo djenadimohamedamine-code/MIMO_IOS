@@ -133,6 +133,14 @@ jobs:
           sed -i 's/minSdk .*/minSdk 21/' android/app/build.gradle
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
 
+      - name: Fetch_NDI_Android
+        run: |
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a/
+          mkdir -p android/app/src/main/cpp/include/
+          curl -L "https://github.com/djenadimohamedamine-code/MIMO_IOS/releases/download/v1.0.1-stable/libndi.so" -o "android/app/src/main/jniLibs/arm64-v8a/libndi.so"
+          curl -L "https://github.com/djenadimohamedamine-code/MIMO_IOS/releases/download/v1.0.1-stable/Include.android.zip" -o "include_android.zip"
+          unzip -o include_android.zip -d android/app/src/main/cpp/include/
+
       - name: Deps
         run: |
           flutter config --enable-android

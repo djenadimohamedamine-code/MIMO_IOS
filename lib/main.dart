@@ -10,7 +10,6 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'login_screen.dart';
 import 'midas_m32.dart';
 import 'sunlight_controller.dart';
 import 'vmix_controller.dart';
@@ -23,12 +22,9 @@ void main() async {
 
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   
-  // 2. Vérifier l'état de connexion
-  final prefs = await SharedPreferences.getInstance();
-  final bool isLoggedIn = prefs.getBool('is_logged_in') ?? false;
+  _diagLog('📦 Running App...');
+  runApp(const MimoNdiApp());
 
-  _diagLog('📦 Running App... (LoggedIn: $isLoggedIn)');
-  runApp(MimoNdiApp(isLoggedIn: isLoggedIn));
 
   // ✅ Permissions déplacées dans MainNavigationScreen pour laisser l'interface s'afficher
 }
@@ -59,8 +55,7 @@ void _diagLog(String msg) {
 }
 
 class MimoNdiApp extends StatelessWidget {
-  final bool isLoggedIn;
-  const MimoNdiApp({super.key, required this.isLoggedIn});
+  const MimoNdiApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -74,9 +69,8 @@ class MimoNdiApp extends StatelessWidget {
         useMaterial3: true,
         fontFamily: 'Roboto',
       ),
-      initialRoute: isLoggedIn ? '/main' : '/login',
+      initialRoute: '/main',
       routes: {
-        '/login': (context) => const LoginScreen(),
         '/main': (context) => const MainNavigationScreen(),
         '/settings': (context) => const SettingsScreen(),
       },
@@ -292,17 +286,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           _drawerItem(6, Icons.wb_sunny, 'Sunlight Control'),
           _drawerItem(7, Icons.info_outline, 'À propos'),
           const Divider(color: Colors.white24),
-          ListTile(
-            leading: const Icon(Icons.logout, color: Colors.orangeAccent),
-            title: const Text('Deconnexion'),
-            onTap: () async {
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setBool('is_logged_in', false);
-              if (context.mounted) {
-                Navigator.of(context).pushReplacementNamed('/login');
-              }
-            },
-          ),
           ListTile(
             leading: const Icon(Icons.settings, color: Colors.blueAccent),
             title: const Text('Paramètres'),
