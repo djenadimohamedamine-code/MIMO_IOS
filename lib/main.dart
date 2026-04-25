@@ -9,10 +9,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'login_screen.dart';
-import 'firebase_options.dart';
 import 'midas_m32.dart';
 import 'sunlight_controller.dart';
 import 'vmix_controller.dart';
@@ -21,15 +19,7 @@ void main() async {
   _diagLog('🚀 App Launching...');
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 1. Initialiser Firebase
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    _diagLog('🔥 Firebase Initialized');
-  } catch (e) {
-    _diagLog('❌ Firebase Error: $e');
-  }
+
 
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   
