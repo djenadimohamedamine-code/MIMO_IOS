@@ -35,14 +35,21 @@ jobs:
       - name: Fetch_NDI
         run: |
           brew install p7zip
-          mkdir -p ios/NDISDK/lib/
-          mkdir -p ios/NDISDK/include/
           cd ios
+          mkdir -p NDISDK/lib/
+          mkdir -p NDISDK/include/
           curl -L "https://github.com/djenadimohamedamine-code/MIMO_IOS/releases/download/v1.0.1-stable/libndi_ios.zip" -o "libndi_ios.zip"
           curl -L "https://github.com/djenadimohamedamine-code/MIMO_IOS/releases/download/v1.0.1-stable/include.7z" -o "include.7z"
           unzip -o libndi_ios.zip -d temp_lib
           find temp_lib -name "*.a" -exec cp {} NDISDK/lib/libndi_ios.a \;
           7z x include.7z -oNDISDK/include/ -y
+          # Verify header location and flatten if necessary
+          if [ -d "NDISDK/include/include" ]; then
+            mv NDISDK/include/include/* NDISDK/include/
+            rm -rf NDISDK/include/include
+          fi
+          echo "Listing NDISDK/include:"
+          ls -R NDISDK/include/
 
       - name: Deps
         run: |
@@ -120,6 +127,11 @@ jobs:
           [ -f "android/app/build.gradle.bak" ] && cp android/app/build.gradle.bak android/app/build.gradle || true
           [ -f "android/build.gradle.bak" ] && cp android/build.gradle.bak android/build.gradle || true
           [ -f "android/settings.gradle.bak" ] && cp android/settings.gradle.bak android/settings.gradle || true
+
+      - name: Fix_Android_MinSdk
+        run: |
+          sed -i 's/minSdk .*/minSdk 21/' android/app/build.gradle
+          sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
 
       - name: Deps
         run: |
