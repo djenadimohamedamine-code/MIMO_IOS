@@ -46,72 +46,56 @@ class SunlightApi {
     }
   }
 
-  /// Joue une scène par son numéro (0 à 499)
+  /// Joue une scène par son numéro (0 à 499) - VERSION SUPER SCANNER
   Future<void> playScene(int sceneNumber) async {
     final x = sceneNumber % 256;
     final y = sceneNumber ~/ 256;
+    final ports = [2430, 2432, 7000, 8000, 9000];
+    final broadcastIp = ipAddress.substring(0, ipAddress.lastIndexOf('.')) + ".255";
     
-    // 1. Envoi UDP (Nicolaudie)
+    // 1. Envoi UDP Standard (Nicolaudie)
     await _sendUdp([1, x, y, 255]);
 
-    // 2. Envoi HTTP (Fallback)
+    // 2. Envoi OSC (Multi-ports & Multi-adresses)
+    for (var p in [7000, 8000, 9000]) {
+      await _sendOscToPort("/button/$sceneNumber", p);
+      await _sendOscToPort("/scene/$sceneNumber", p);
+      // Envoi broadcast aussi
+      _sendOscToIpAndPort("/button/$sceneNumber", broadcastIp, p);
+    }
+
+    // 3. Envoi HTTP (Fallback)
     try {
       final url = Uri.parse('http://$ipAddress:8080/api/scene/call/$sceneNumber');
-      http.get(url).timeout(const Duration(milliseconds: 500));
+      http.get(url).timeout(const Duration(milliseconds: 300));
     } catch (_) {}
-
-    // 3. Envoi OSC (Port 7000 - Nouveau !)
-    await _sendOsc("/button/$sceneNumber");
   }
 
-  /// Formatage et envoi d'un message OSC avec argument Float 1.0
-  Future<void> _sendOsc(String address) async {
+  Future<void> _sendOscToPort(String address, int p) async {
+    await _sendOscToIpAndPort(address, ipAddress, p);
+  }
+
+  Future<void> _sendOscToIpAndPort(String address, String targetIp, int p) async {
     RawDatagramSocket? socket;
     try {
       socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+      socket.broadcastEnabled = true;
       
-      // Construction du paquet OSC : [Adresse] [Type] [Valeur]
       List<int> packet = [];
-      
-      // 1. Adresse (ex: /button/0)
       packet.addAll(utf8.encode(address));
       packet.add(0);
       while (packet.length % 4 != 0) { packet.add(0); }
-      
-      // 2. Types string (,f pour float)
       packet.addAll(utf8.encode(",f"));
       packet.add(0);
       while (packet.length % 4 != 0) { packet.add(0); }
-      
-      // 3. Valeur float 1.0 (IEEE 754 : 0x3f800000)
-      packet.addAll([0x3f, 0x80, 0x00, 0x00]);
+      packet.addAll([0x3f, 0x80, 0x00, 0x00]); // Value 1.0
 
-      // Envoi sur les ports 7000 et 8000 (les deux standards Nicolaudie)
-      socket.send(packet, InternetAddress(ipAddress), 7000);
-      socket.send(packet, InternetAddress(ipAddress), 8000);
-      
-      // On envoie aussi une variante d'adresse /scene/X pour être sûr
-      final altAddress = address.replaceAll("button", "scene");
-      List<int> altPacket = [];
-      altPacket.addAll(utf8.encode(altAddress));
-      altPacket.add(0);
-      while (altPacket.length % 4 != 0) { altPacket.add(0); }
-      altPacket.addAll(utf8.encode(",f"));
-      altPacket.add(0);
-      while (altPacket.length % 4 != 0) { altPacket.add(0); }
-      altPacket.addAll([0x3f, 0x80, 0x00, 0x00]);
-      
-      socket.send(altPacket, InternetAddress(ipAddress), 7000);
-      socket.send(altPacket, InternetAddress(ipAddress), 8000);
-
-      print("🎭 Sunlite OSC (Float 1.0) → $ipAddress:7000/8000 [$address & $altAddress]");
-    } catch (e) {
-      print("❌ OSC Error: $e");
-    } finally {
-      await Future.delayed(const Duration(milliseconds: 10));
+      socket.send(packet, InternetAddress(targetIp), p);
+    } catch (_) {} finally {
       socket?.close();
     }
   }
+
 
   /// Arrête une scène
   Future<void> stopScene(int sceneNumber) async {
