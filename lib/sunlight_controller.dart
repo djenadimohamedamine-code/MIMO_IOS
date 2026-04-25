@@ -21,20 +21,22 @@ class SunlightApi {
       socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
       socket.broadcastEnabled = true; 
       
-      // 1. Envoi standard (4 octets)
-      socket.send(bytes, InternetAddress(ipAddress), port);
-      
-      // 2. Envoi format NICO (8 octets) - Souvent requis pour Sunlite 3
       final nicoPacket = [...utf8.encode('NICO'), ...bytes];
-      socket.send(nicoPacket, InternetAddress(ipAddress), port);
+      final ports = [2430, 2432]; // Test both common ports
 
-      // 3. Envoi en Broadcast sur le sous-réseau (ex: 192.168.1.255)
-      try {
-        final String subnet = ipAddress.substring(0, ipAddress.lastIndexOf('.'));
-        socket.send(bytes, InternetAddress('$subnet.255'), port);
-      } catch (_) {}
+      for (var p in ports) {
+        // Envoi IP précise (Standard + NICO)
+        socket.send(bytes, InternetAddress(ipAddress), p);
+        socket.send(nicoPacket, InternetAddress(ipAddress), p);
+        
+        // Envoi Broadcast (Standard)
+        try {
+          final String subnet = ipAddress.substring(0, ipAddress.lastIndexOf('.'));
+          socket.send(bytes, InternetAddress('$subnet.255'), p);
+        } catch (_) {}
+      }
 
-      print("☀️ Sunlite UDP → $ipAddress:$port [Formats: Standard & NICO]");
+      print("☀️ Sunlite UDP → $ipAddress (Ports: ${ports.join(',')})");
     } catch (e) {
       print("❌ Sunlite UDP Error: $e");
     } finally {
