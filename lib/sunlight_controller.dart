@@ -305,10 +305,7 @@ class _SunlightScreenState extends State<SunlightScreen> {
                     ),
                   ),
                 ),
-              ],
-            ),
-          ),
-
+                
           // ── Scènes actives badge ──
           if (_activeScene != null)
             Container(
