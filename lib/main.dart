@@ -10,11 +10,13 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'midas_m32.dart';
 
 void main() async {
   _diagLog('­ƒÜÇ App Launching...');
   WidgetsFlutterBinding.ensureInitialized();
+
 
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   
