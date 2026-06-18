@@ -9,34 +9,17 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'login_screen.dart';
-import 'firebase_options.dart';
 import 'midas_m32.dart';
 
 void main() async {
   _diagLog('­ƒÜÇ App Launching...');
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 1. Initialiser Firebase
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    _diagLog('­ƒöÑ Firebase Initialized');
-  } catch (e) {
-    _diagLog('ÔØî Firebase Error: $e');
-  }
-
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   
-  // 2. V├®rifier l'├®tat de connexion
-  final prefs = await SharedPreferences.getInstance();
-  final bool isLoggedIn = prefs.getBool('is_logged_in') ?? false;
-
-  _diagLog('­ƒôª Running App... (LoggedIn: $isLoggedIn)');
-  runApp(MimoNdiApp(isLoggedIn: isLoggedIn));
+  _diagLog('­ƒôª Running App...');
+  runApp(const MimoNdiApp());
 
   // Ô£à Permissions d├®plac├®es dans MainNavigationScreen pour laisser l'interface s'afficher
 }
@@ -67,8 +50,7 @@ void _diagLog(String msg) {
 }
 
 class MimoNdiApp extends StatelessWidget {
-  final bool isLoggedIn;
-  const MimoNdiApp({super.key, required this.isLoggedIn});
+  const MimoNdiApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -82,9 +64,8 @@ class MimoNdiApp extends StatelessWidget {
         useMaterial3: true,
         fontFamily: 'Roboto',
       ),
-      initialRoute: isLoggedIn ? '/main' : '/login',
+      initialRoute: '/main',
       routes: {
-        '/login': (context) => const LoginScreen(),
         '/main': (context) => const MainNavigationScreen(),
         '/settings': (context) => const SettingsScreen(),
       },
@@ -302,17 +283,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           _drawerItem(5, Icons.graphic_eq, 'Midas M32'),
           _drawerItem(6, Icons.info_outline, 'À propos'),
           const Divider(color: Colors.white24),
-          ListTile(
-            leading: const Icon(Icons.logout, color: Colors.orangeAccent),
-            title: const Text('Deconnexion'),
-            onTap: () async {
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setBool('is_logged_in', false);
-              if (context.mounted) {
-                Navigator.of(context).pushReplacementNamed('/login');
-              }
-            },
-          ),
           ListTile(
             leading: const Icon(Icons.settings, color: Colors.blueAccent),
             title: const Text('Paramètres'),
