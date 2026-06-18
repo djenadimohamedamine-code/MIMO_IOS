@@ -20,6 +20,10 @@ class NDIManager: NSObject {
     private(set) var currentCameraPosition: AVCaptureDevice.Position = .back
     private var lastFrameTime = CACurrentMediaTime()
     private var lastSendTime = CACurrentMediaTime() // 🔧 Watchdog NDI
+    private var currentFps: Int32 = 30
+    private var outputPixelBufferPool: CVPixelBufferPool?
+    private var poolWidth: Int = 0
+    private var poolHeight: Int = 0
     
     // 🎬 NDI RELAY SYSTEM (MIMO_NDI_SWITCH → TriCaster)
     private var relaySendInstance: NDIlib_send_instance_t?
