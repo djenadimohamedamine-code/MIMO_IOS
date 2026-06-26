@@ -192,8 +192,8 @@ class NDIManager: NSObject {
             let session = AVCaptureSession()
             session.beginConfiguration()
             
-            // ✅ Retour à 720p fixe pour stabilité maximale
-            session.sessionPreset = .hd1280x720
+            // ✅ 1080p pour matcher TriCaster 1080i/50
+            session.sessionPreset = .hd1920x1080
             
             // On s'assure que tout est vierge
             session.inputs.forEach { session.removeInput($0) }
@@ -205,10 +205,10 @@ class NDIManager: NSObject {
                 return
             }
             
-            // ✅ Framerate fixe 30 fps
+            // ✅ Framerate fixe 25 fps (PAL 50i)
             try? device.lockForConfiguration()
-            device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 30)
-            device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
+            device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 25)
+            device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 25)
             device.unlockForConfiguration()
             
             if session.canAddInput(input) { session.addInput(input) }
@@ -430,8 +430,8 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         videoFrame.yres = Int32(height)
         // ✅ Format BGRA natif (RGB)
         videoFrame.FourCC = NDIlib_FourCC_video_type_BGRA
-        videoFrame.frame_rate_N = 30000
-        videoFrame.frame_rate_D = 1001
+        videoFrame.frame_rate_N = 25000
+        videoFrame.frame_rate_D = 1000
         videoFrame.picture_aspect_ratio = Float(width) / Float(height)
         videoFrame.frame_format_type = NDIlib_frame_format_type_progressive
         videoFrame.timecode = Int64.max
