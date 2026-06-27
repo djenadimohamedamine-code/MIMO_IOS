@@ -11,18 +11,11 @@
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
-extern "C" JNIEXPORT jobject JNICALL
-Java_com_antigravity_ndi_1player_1app_MainActivity_getNativeSources(JNIEnv* env, jobject /* this */) {
-    if (!NDIlib_initialize()) {
-        LOGE("NDIlib_initialize failed");
-        return nullptr;
-    }
-    NDIlib_find_create_t find_create_settings;
-    NDIlib_find_instance_t p_find = NDIlib_find_create_v2(&find_create_settings);
-    if (!p_find) return nullptr;
-    NDIlib_find_wait_for_sources(p_find, 1000);
-    uint32_t no_sources = 0;
-    const NDIlib_source_t* p_sources = NDIlib_find_get_current_sources(p_find, &no_sources);
+// Persistent NDI finder for continuous source discovery
+static NDIlib_find_instance_t g_p_find = nullptr;
+static bool g_initialized = false;
+
+static jobject buildSourceList(JNIEnv* env, uint32_t no_sources, const NDIlib_source_t* p_sources) {
     jclass listClass = env->FindClass("java/util/ArrayList");
     jmethodID listInit = env->GetMethodID(listClass, "<init>", "()V");
     jmethodID listAdd = env->GetMethodID(listClass, "add", "(Ljava/lang/Object;)Z");
@@ -31,8 +24,55 @@ Java_com_antigravity_ndi_1player_1app_MainActivity_getNativeSources(JNIEnv* env,
         jstring sourceName = env->NewStringUTF(p_sources[i].p_ndi_name);
         env->CallBooleanMethod(listObj, listAdd, sourceName);
     }
-    NDIlib_find_destroy(p_find);
     return listObj;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_antigravity_ndi_1player_1app_MainActivity_initNDIFinder(JNIEnv* env, jobject /* this */) {
+    if (g_p_find) return; // Already initialized
+    if (!NDIlib_initialize()) {
+        LOGE("initNDIFinder: NDIlib_initialize failed");
+        return;
+    }
+    NDIlib_find_create_t find_create_settings;
+    g_p_find = NDIlib_find_create_v2(&find_create_settings);
+    if (!g_p_find) {
+        LOGE("initNDIFinder: NDIlib_find_create_v2 failed");
+        return;
+    }
+    // Initial wait for sources (longer for weak networks)
+    NDIlib_find_wait_for_sources(g_p_find, 3000);
+    g_initialized = true;
+    LOGD("initNDIFinder: NDI finder initialized");
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_antigravity_ndi_1player_1app_MainActivity_getNativeSources(JNIEnv* env, jobject /* this */) {
+    if (!g_initialized || !g_p_find) {
+        Java_com_antigravity_ndi_1player_1app_MainActivity_initNDIFinder(env, nullptr);
+        if (!g_p_find) {
+            // Return empty list
+            jclass listClass = env->FindClass("java/util/ArrayList");
+            jmethodID listInit = env->GetMethodID(listClass, "<init>", "()V");
+            return env->NewObject(listClass, listInit);
+        }
+    }
+    // Non-blocking poll for updated sources (finder runs in background)
+    NDIlib_find_wait_for_sources(g_p_find, 0);
+    uint32_t no_sources = 0;
+    const NDIlib_source_t* p_sources = NDIlib_find_get_current_sources(g_p_find, &no_sources);
+    return buildSourceList(env, no_sources, p_sources);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_antigravity_ndi_1player_1app_MainActivity_destroyNDIFinder(JNIEnv* env, jobject /* this */) {
+    if (g_p_find) {
+        NDIlib_find_destroy(g_p_find);
+        g_p_find = nullptr;
+    }
+    NDIlib_destroy();
+    g_initialized = false;
+    LOGD("destroyNDIFinder: NDI finder destroyed");
 }
 
 extern "C" JNIEXPORT jlong JNICALL

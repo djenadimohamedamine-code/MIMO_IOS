@@ -25,6 +25,7 @@ class MainActivity: FlutterActivity() {
 
         lifecycleOwner = this
         acquireMulticastLock()
+        initNDIFinder()
 
         flutterEngine.platformViewsController.registry.registerViewFactory(
             "ndi-view", NdiViewFactory()
@@ -80,6 +81,7 @@ class MainActivity: FlutterActivity() {
 
     override fun onDestroy() {
         releaseMulticastLock()
+        destroyNDIFinder()
         super.onDestroy()
     }
 
@@ -101,5 +103,7 @@ class MainActivity: FlutterActivity() {
         }
     }
 
+    private external fun initNDIFinder()
     private external fun getNativeSources(): List<String>
+    private external fun destroyNDIFinder()
 }
