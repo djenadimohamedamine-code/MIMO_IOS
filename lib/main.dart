@@ -256,7 +256,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               image: DecorationImage(
                 image: AssetImage('IMG_0730.JPG'),
                 fit: BoxFit.cover,
-                alignment: Alignment.topCenter, // ✅ Baissé pour montrer la tête
+                alignment: Alignment.center,
                 colorFilter:
                     ColorFilter.mode(Colors.black38, BlendMode.darken),
               ),

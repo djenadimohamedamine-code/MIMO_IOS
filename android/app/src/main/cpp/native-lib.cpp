@@ -168,3 +168,56 @@ Java_com_antigravity_ndi_1player_1app_NdiView_getFrameResolution(JNIEnv* env, jo
     env->SetIntArrayRegion(result, 0, 2, res);
     return result;
 }
+
+// ─── Sender JNI ───────────────────────────────────────────────────────────────
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_antigravity_ndi_1player_1app_NdiCameraPreview_createSender(JNIEnv* env, jobject /* thiz */, jstring sourceName) {
+    if (!NDIlib_initialize()) {
+        LOGE("createSender: NDIlib_initialize failed");
+        return 0;
+    }
+    const char* name = env->GetStringUTFChars(sourceName, nullptr);
+    NDIlib_send_create_t send_create;
+    send_create.p_ndi_name = name;
+    send_create.p_groups = nullptr;
+    send_create.clock_video = true;
+    send_create.clock_audio = false;
+    NDIlib_send_instance_t p_send = NDIlib_send_create(&send_create);
+    env->ReleaseStringUTFChars(sourceName, name);
+    if (!p_send) {
+        LOGE("createSender: NDIlib_send_create returned null");
+        return 0;
+    }
+    LOGD("createSender: created NDI sender '%s' (ptr=%lld)", name, (long long)p_send);
+    return (jlong)p_send;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_antigravity_ndi_1player_1app_NdiCameraPreview_sendVideoFrame(JNIEnv* env, jobject /* thiz */, jlong p_send, jint width, jint height, jbyteArray rgbaData) {
+    if (!p_send || !rgbaData) return;
+    jbyte* data = env->GetByteArrayElements(rgbaData, nullptr);
+    NDIlib_video_frame_v2_t video_frame;
+    video_frame.xres = width;
+    video_frame.yres = height;
+    video_frame.FourCC = NDIlib_FourCC_video_type_RGBA;
+    video_frame.p_data = (uint8_t*)data;
+    video_frame.line_stride_in_bytes = width * 4;
+    video_frame.frame_rate_N = 30000;
+    video_frame.frame_rate_D = 1001;
+    video_frame.picture_aspect_ratio = (float)width / (float)height;
+    video_frame.frame_format_type = NDIlib_frame_format_type_progressive;
+    video_frame.timecode = NDIlib_send_timecode_synthesize;
+    video_frame.p_metadata = nullptr;
+    video_frame.timestamp = 0;
+    NDIlib_send_send_video_v2((NDIlib_send_instance_t)p_send, &video_frame);
+    env->ReleaseByteArrayElements(rgbaData, data, JNI_ABORT);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_antigravity_ndi_1player_1app_NdiCameraPreview_destroySender(JNIEnv* env, jobject /* thiz */, jlong p_send) {
+    if (p_send) {
+        NDIlib_send_destroy((NDIlib_send_instance_t)p_send);
+        LOGD("destroySender: sender destroyed (ptr=%lld)", (long long)p_send);
+    }
+}

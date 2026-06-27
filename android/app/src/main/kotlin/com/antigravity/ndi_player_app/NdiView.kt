@@ -136,10 +136,21 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
         Thread {
             var targetW = if (currentQuality == "480p") 960 else 1920
             var targetH = if (currentQuality == "480p") 540 else 1080
+
+            // Wait up to 100ms for first frame to get real resolution
+            var ptr: Long = 0
+            synchronized(lock) { ptr = pInstance }
+            if (ptr != 0L) {
+                val res = getFrameResolution(ptr)
+                if (res[0] > 0 && res[1] > 0) {
+                    targetW = res[0]
+                    targetH = res[1]
+                }
+            }
+
             var bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
             
             while (isRunning) {
-                var ptr: Long = 0
                 synchronized(lock) { ptr = pInstance }
 
                 if (ptr != 0L) {
@@ -159,7 +170,7 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
                         if (System.currentTimeMillis() - lastFrameTime > 3000 && !isRecovering) {
                             performAutoRecovery()
                         }
-                        try { Thread.sleep(2) } catch (e: Exception) {}
+                        try { Thread.sleep(1) } catch (e: Exception) {}
                     }
                 }
             }
