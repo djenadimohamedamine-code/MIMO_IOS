@@ -256,16 +256,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               image: DecorationImage(
                 image: AssetImage('IMG_0730.JPG'),
                 fit: BoxFit.cover,
-                alignment: Alignment.bottomCenter,
+                // 🎯 topCenter = on voit la TÊTE, pas le torse
+                alignment: Alignment(0.0, -0.8),
                 colorFilter:
                     ColorFilter.mode(Colors.black38, BlendMode.darken),
               ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.end, // ✅ Pousse le texte vers le bas
+              mainAxisAlignment: MainAxisAlignment.end,
               children: const [
-                // CircleAvatar supprimé comme demandé
                 Text('MIMO_NDI',
                     style: TextStyle(
                         color: Colors.white,
