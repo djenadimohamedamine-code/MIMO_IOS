@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui';
@@ -1055,16 +1055,32 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
                   style: const TextStyle(
                       fontSize: 16, fontWeight: FontWeight.bold)),
             ),
-            ...widget.sources.map((s) => ListTile(
-                  leading: const Icon(Icons.sensors,
-                      color: Colors.greenAccent),
-                  title: Text(s),
-                  onTap: () {
-                    setState(() => _slots[slot] = s);
-                    _saveSlot(slot, s);
-                    Navigator.pop(context);
-                  },
-                )),
+            if (widget.sources.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Column(
+                  children: [
+                    Icon(Icons.wifi_off, size: 40, color: Colors.white24),
+                    SizedBox(height: 12),
+                    Text('Aucune source NDI trouvée',
+                        style: TextStyle(color: Colors.white38, fontSize: 14)),
+                    SizedBox(height: 8),
+                    Text('Vérifiez que les caméras sont allumées',
+                        style: TextStyle(color: Colors.white24, fontSize: 12)),
+                  ],
+                ),
+              )
+            else
+              ...widget.sources.map((s) => ListTile(
+                    leading: const Icon(Icons.sensors,
+                        color: Colors.greenAccent),
+                    title: Text(s),
+                    onTap: () {
+                      setState(() => _slots[slot] = s);
+                      _saveSlot(slot, s);
+                      Navigator.pop(context);
+                    },
+                  )),
             if (_slots[slot] != null)
               ListTile(
                 leading: const Icon(Icons.close, color: Colors.redAccent),
@@ -2075,7 +2091,7 @@ class _LivePanelScreenState extends State<LivePanelScreen> {
     // ✅ Chargement intelligent de l'URL (IP ou URL complète)
     String url = _targetIp;
     if (!url.startsWith('http')) {
-      url = 'http://$url';
+      url = 'http://admin:admin@$url';
     }
     
     _diagLog('🌐 LivePanel Loading: $url');
@@ -2297,3 +2313,4 @@ class AboutScreen extends StatelessWidget {
     );
   }
 }
+
