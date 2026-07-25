@@ -67,7 +67,7 @@ class NDIManager: NSObject {
         // AudioSession (OK sur main thread)
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+            try session.setCategory(.playAndRecord, mode: .videoChat, options: [.mixWithOthers, .defaultToSpeaker])
             try session.setActive(true)
         } catch {
             print("❌ AVAudioSession FAIL: \(error)")
@@ -231,6 +231,16 @@ class NDIManager: NSObject {
                         }
                     }
                 }
+            }
+
+            // ✅ Ajout de l'audio d'ambiance
+            if let audioDevice = AVCaptureDevice.default(for: .audio),
+               let audioInput = try? AVCaptureDeviceInput(device: audioDevice) {
+                if session.canAddInput(audioInput) { session.addInput(audioInput) }
+                
+                let audioOutput = AVCaptureAudioDataOutput()
+                audioOutput.setSampleBufferDelegate(self, queue: self.captureQueue)
+                if session.canAddOutput(audioOutput) { session.addOutput(audioOutput) }
             }
 
             self.outputPixelBufferPool = nil // Reset pool
@@ -411,35 +421,73 @@ class NDIManager: NSObject {
     }
 }
 
-extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate {
+extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let send = sendInstance else { return }
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-        
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        let stride = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        
-        guard let data = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
+        if output is AVCaptureVideoDataOutput {
+            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        var videoFrame = NDIlib_video_frame_v2_t()
-        videoFrame.xres = Int32(width)
-        videoFrame.yres = Int32(height)
-        // ✅ Format BGRA natif (RGB)
-        videoFrame.FourCC = NDIlib_FourCC_video_type_BGRA
-        videoFrame.frame_rate_N = 25000
-        videoFrame.frame_rate_D = 1000
-        videoFrame.picture_aspect_ratio = Float(width) / Float(height)
-        videoFrame.frame_format_type = NDIlib_frame_format_type_progressive
-        videoFrame.timecode = Int64.max
-        videoFrame.line_stride_in_bytes = Int32(stride)
-        videoFrame.p_data = data.bindMemory(to: UInt8.self, capacity: stride * height)
+            CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+            
+            let width = CVPixelBufferGetWidth(pixelBuffer)
+            let height = CVPixelBufferGetHeight(pixelBuffer)
+            let stride = CVPixelBufferGetBytesPerRow(pixelBuffer)
+            
+            guard let data = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
 
-        NDIlib_send_send_video_v2(send, &videoFrame)
-        self.lastSendTime = CACurrentMediaTime()
+            var videoFrame = NDIlib_video_frame_v2_t()
+            videoFrame.xres = Int32(width)
+            videoFrame.yres = Int32(height)
+            // ✅ Format BGRA natif (RGB)
+            videoFrame.FourCC = NDIlib_FourCC_video_type_BGRA
+            videoFrame.frame_rate_N = 25000
+            videoFrame.frame_rate_D = 1000
+            videoFrame.picture_aspect_ratio = Float(width) / Float(height)
+            videoFrame.frame_format_type = NDIlib_frame_format_type_progressive
+            videoFrame.timecode = Int64.max
+            videoFrame.line_stride_in_bytes = Int32(stride)
+            videoFrame.p_data = data.bindMemory(to: UInt8.self, capacity: stride * height)
+
+            NDIlib_send_send_video_v2(send, &videoFrame)
+            self.lastSendTime = CACurrentMediaTime()
+        } else if output is AVCaptureAudioDataOutput {
+            // ✅ Envoi de l'audio d'ambiance
+            var audioBufferList = AudioBufferList()
+            var blockBuffer: CMBlockBuffer?
+            CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+                sampleBuffer,
+                bufferListSizeNeededOut: nil,
+                bufferListOut: &audioBufferList,
+                bufferListSize: MemoryLayout<AudioBufferList>.size,
+                blockBufferAllocator: nil,
+                blockBufferMemoryAllocator: nil,
+                flags: 0,
+                blockBufferOut: &blockBuffer
+            )
+            
+            guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
+                  let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) else { return }
+            
+            let p = asbd.pointee
+            let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
+            let channels = p.mChannelsPerFrame
+            let sampleRate = p.mSampleRate
+            guard let data = audioBufferList.mBuffers.mData else { return }
+
+            if p.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0 {
+                // 16-bit int interleaved
+                var audioFrame = NDIlib_audio_frame_interleaved_16s_t()
+                audioFrame.sample_rate = Int32(sampleRate)
+                audioFrame.no_channels = Int32(channels)
+                audioFrame.no_samples = Int32(numSamples)
+                audioFrame.timecode = Int64.max
+                audioFrame.reference_level = 0
+                audioFrame.p_data = data.bindMemory(to: Int16.self, capacity: Int(numSamples * channels))
+                NDIlib_util_send_send_audio_interleaved_16s(send, &audioFrame)
+            }
+        }
     }
 
     private func currentOrientation() -> AVCaptureVideoOrientation {

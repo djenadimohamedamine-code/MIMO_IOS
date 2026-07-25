@@ -1,4 +1,4 @@
-﻿import Flutter
+import Flutter
 import UIKit
 import CoreImage
 import AVFoundation
@@ -275,8 +275,7 @@ class NDIView: NSObject, FlutterPlatformView {
     }
 
     private func playAudio(_ frame: NDIlib_audio_frame_v2_t) {
-        let engine = NDIManager.shared.sharedAudioEngine
-        guard engine.isRunning,
+        guard let engine = self.audioEngine, engine.isRunning,
               let node = playerNode, node.isPlaying,
               let format = audioFormat, !isMuted else { return }
 
