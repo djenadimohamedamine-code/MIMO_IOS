@@ -454,18 +454,10 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAud
             self.lastSendTime = CACurrentMediaTime()
         } else if output is AVCaptureAudioDataOutput {
             // ✅ Envoi de l'audio d'ambiance
-            var audioBufferList = AudioBufferList()
-            var blockBuffer: CMBlockBuffer?
-            CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-                sampleBuffer,
-                bufferListSizeNeededOut: nil,
-                bufferListOut: &audioBufferList,
-                bufferListSize: MemoryLayout<AudioBufferList>.size,
-                blockBufferAllocator: nil,
-                blockBufferMemoryAllocator: nil,
-                flags: 0,
-                blockBufferOut: &blockBuffer
-            )
+            guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
+            var length = 0
+            var dataPointer: UnsafeMutablePointer<Int8>? = nil
+            CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
             
             guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
                   let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) else { return }
@@ -474,18 +466,33 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAud
             let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
             let channels = p.mChannelsPerFrame
             let sampleRate = p.mSampleRate
-            guard let data = audioBufferList.mBuffers.mData else { return }
+            guard let data = dataPointer else { return }
 
             if p.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0 {
                 // 16-bit int interleaved
-                var audioFrame = NDIlib_audio_frame_interleaved_16s_t()
-                audioFrame.sample_rate = Int32(sampleRate)
-                audioFrame.no_channels = Int32(channels)
-                audioFrame.no_samples = Int32(numSamples)
-                audioFrame.timecode = Int64.max
-                audioFrame.reference_level = 0
-                audioFrame.p_data = data.bindMemory(to: Int16.self, capacity: Int(numSamples * channels))
-                NDIlib_util_send_send_audio_interleaved_16s(send, &audioFrame)
+                data.withMemoryRebound(to: Int16.self, capacity: Int(numSamples * channels)) { ptr in
+                    var audioFrame = NDIlib_audio_frame_interleaved_16s_t()
+                    audioFrame.sample_rate = Int32(sampleRate)
+                    audioFrame.no_channels = Int32(channels)
+                    audioFrame.no_samples = Int32(numSamples)
+                    audioFrame.timecode = Int64.max
+                    audioFrame.reference_level = 0
+                    audioFrame.p_data = ptr
+                    NDIlib_util_send_send_audio_interleaved_16s(send, &audioFrame)
+                }
+            } else if p.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
+                if p.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0 {
+                    // 32-bit float interleaved
+                    data.withMemoryRebound(to: Float.self, capacity: Int(numSamples * channels)) { ptr in
+                        var audioFrame = NDIlib_audio_frame_interleaved_32f_t()
+                        audioFrame.sample_rate = Int32(sampleRate)
+                        audioFrame.no_channels = Int32(channels)
+                        audioFrame.no_samples = Int32(numSamples)
+                        audioFrame.timecode = Int64.max
+                        audioFrame.p_data = ptr
+                        NDIlib_util_send_send_audio_interleaved_32f(send, &audioFrame)
+                    }
+                }
             }
         }
     }
