@@ -470,7 +470,7 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAud
 
             if p.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0 {
                 // 16-bit int interleaved
-                data.withMemoryRebound(to: Int16.self, capacity: Int(numSamples * channels)) { ptr in
+                data.withMemoryRebound(to: Int16.self, capacity: Int(numSamples) * Int(channels)) { ptr in
                     var audioFrame = NDIlib_audio_frame_interleaved_16s_t()
                     audioFrame.sample_rate = Int32(sampleRate)
                     audioFrame.no_channels = Int32(channels)
@@ -483,7 +483,7 @@ extension NDIManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAud
             } else if p.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
                 if p.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0 {
                     // 32-bit float interleaved
-                    data.withMemoryRebound(to: Float.self, capacity: Int(numSamples * channels)) { ptr in
+                    data.withMemoryRebound(to: Float.self, capacity: Int(numSamples) * Int(channels)) { ptr in
                         var audioFrame = NDIlib_audio_frame_interleaved_32f_t()
                         audioFrame.sample_rate = Int32(sampleRate)
                         audioFrame.no_channels = Int32(channels)
