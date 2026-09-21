@@ -274,7 +274,7 @@ class NDIView: NSObject, FlutterPlatformView {
         }
     }
 
-    private func playAudio(_ frame: NDIlib_audio_frame_v2_t) {
+        private func playAudio(_ frame: NDIlib_audio_frame_v2_t) {
         guard let engine = self.audioEngine, engine.isRunning,
               let node = playerNode, node.isPlaying,
               let format = audioFormat, !isMuted else { return }
@@ -291,18 +291,14 @@ class NDIView: NSObject, FlutterPlatformView {
             let stride = Int(frame.channel_stride_in_bytes)
             let actualStride = (stride == 0) ? (noSamples * 4) : stride
             
-            let maxDataSize = noSamples * noChannels * 4
             if let floatChannels = pcmBuffer.floatChannelData {
                 for ch in 0..<min(noChannels, 2) {
                     let dest = floatChannels[ch]
                     let srcChannelData = data.advanced(by: ch * actualStride)
-                    // ­ƒøí´©Å Safety check to avoid out of bounds
-                    if (ch * actualStride) + (noSamples * 4) <= maxDataSize {
-                        memcpy(dest, srcChannelData, noSamples * 4)
-                    }
+                    memcpy(dest, srcChannelData, noSamples * 4)
                 }
             }
-            node.scheduleBuffer(pcmBuffer, at: nil, options: .interruptsAtLoop, completionHandler: nil)
+            node.scheduleBuffer(pcmBuffer, at: nil, options: [], completionHandler: nil)
         }
     }
 
@@ -386,7 +382,7 @@ class NDIView: NSObject, FlutterPlatformView {
         if isRecording { stopRecording() }
         if let node = playerNode {
             node.stop()
-            NDIManager.shared.sharedAudioEngine.detach(node)
+            self.audioEngine?.detach(node)
             playerNode = nil
         }
         
