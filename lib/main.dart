@@ -85,7 +85,7 @@ class MainNavigationScreen extends StatefulWidget {
   State<MainNavigationScreen> createState() => _MainNavigationScreenState();
 }
 
-class _MainNavigationScreenState extends State<MainNavigationScreen> {
+class _MainNavigationScreenState extends State<MainNavigationScreen> with WidgetsBindingObserver {
   static const _channel = MethodChannel('com.antigravity/ndi');
   int _selectedIndex = 0;
   List<String> _sources = [];
@@ -95,6 +95,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _setOrientation(_selectedIndex);
     // ✅ SÉQUENCEUR DE DÉMARRAGE ULTRA-ROBUSTE
     // T+0: L'interface s'affiche (pas d'écran noir)
@@ -140,7 +141,23 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   @override
   void dispose() {
     _scanTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _scanTimer?.cancel();
+      _scanTimer = null;
+    } else if (state == AppLifecycleState.resumed) {
+      if (_scanTimer == null) {
+        _startGlobalScan();
+        _scanTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+          _startGlobalScan();
+        });
+      }
+    }
   }
 
   Future<void> _startGlobalScan() async {
