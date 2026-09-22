@@ -250,6 +250,18 @@ class NDIManager: NSObject {
                 if session.canAddInput(audioInput) { session.addInput(audioInput) }
                 
                 let audioOutput = AVCaptureAudioDataOutput()
+                // ✅ Forcer un format simple (16-bit int interleaved) pour matcher
+                // la branche gérée dans captureOutput() — sans ça iOS livre du
+                // Float32 non-interleaved par défaut, qui ne rentre dans aucune
+                // branche existante et produit un flux NDI muet.
+                audioOutput.audioSettings = [
+                    AVFormatIDKey: kAudioFormatLinearPCM,
+                    AVLinearPCMBitDepthKey: 16,
+                    AVLinearPCMIsFloatKey: false,
+                    AVLinearPCMIsNonInterleaved: false,
+                    AVNumberOfChannelsKey: 1,
+                    AVSampleRateKey: 48000.0
+                ]
                 audioOutput.setSampleBufferDelegate(self, queue: self.captureQueue)
                 if session.canAddOutput(audioOutput) { session.addOutput(audioOutput) }
             }
