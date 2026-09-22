@@ -124,7 +124,7 @@ class NDIManager: NSObject {
                     }
                 }
                 self?.cachedSources = names
-                sleep(30) // 💤 30 secondes — On ne touche plus au réseau pendant qu'on filme
+                sleep(2) // 💤 30 secondes — On ne touche plus au réseau pendant qu'on filme
             }
         }
     }
