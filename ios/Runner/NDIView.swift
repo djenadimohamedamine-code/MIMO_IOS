@@ -147,15 +147,38 @@ class NDIView: NSObject, FlutterPlatformView {
         
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+            // CRITICAL FIX: Use .playAndRecord to match NDIManager's category
+            // + .defaultToSpeaker so audio comes out of the LOUD speaker, not the earpiece
+            try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth])
             try session.setActive(true)
+            try session.overrideOutputAudioPort(.speaker)
             
             engine.prepare() 
             try engine.start()
             node.play()
-            print("Ô£à Audio Engine Ready")
+            print("🔊 Audio Engine Ready (Speaker Route)")
         } catch { 
-            print("ÔØî Audio Session Error: \(error)") 
+            print("❌ Audio Session Error: \(error)") 
+        }
+    }
+    
+    private func ensureAudioEngineRunning() {
+        guard !isMuted else { return }
+        guard let engine = audioEngine, let node = playerNode else {
+            setupAudioEngine()
+            return
+        }
+        if !engine.isRunning {
+            do {
+                try engine.start()
+                print("🔊 Audio Engine restarted")
+            } catch {
+                print("❌ Audio Engine restart failed: \(error)")
+            }
+        }
+        if !node.isPlaying {
+            node.play()
+            print("🔊 Audio PlayerNode restarted")
         }
     }
 
@@ -204,7 +227,10 @@ class NDIView: NSObject, FlutterPlatformView {
                     } else if type == NDIlib_frame_type_audio {
                         // Heartbeat based on audio too is safer
                         self.lastCaptureTime = CACurrentMediaTime()
-                        if !self.isMuted { self.playAudio(a) }
+                        if !self.isMuted { 
+                            self.ensureAudioEngineRunning()
+                            self.playAudio(a) 
+                        }
                         var mutA = a
                         NDIlib_recv_free_audio_v2(recv, &mutA)
                     } else if type == NDIlib_frame_type_metadata {
