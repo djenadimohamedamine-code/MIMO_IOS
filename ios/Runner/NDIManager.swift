@@ -207,6 +207,17 @@ class NDIManager: NSObject {
             
             // ✅ Framerate fixe 25 fps (PAL 50i)
             try? device.lockForConfiguration()
+            
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            }
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            }
+            if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                device.whiteBalanceMode = .continuousAutoWhiteBalance
+            }
+
             device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 25)
             device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 25)
             device.unlockForConfiguration()
@@ -223,7 +234,7 @@ class NDIManager: NSObject {
                 session.addOutput(output)
                 if let connection = output.connection(with: .video) {
                     if connection.isVideoStabilizationSupported {
-                        connection.preferredVideoStabilizationMode = .off
+                        connection.preferredVideoStabilizationMode = .auto
                     }
                     if connection.isVideoOrientationSupported {
                         DispatchQueue.main.sync {
