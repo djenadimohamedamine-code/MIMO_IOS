@@ -1638,15 +1638,7 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
               child: Row(
                 children: [
 
-                  Expanded(
-                    child: _ModeButton(
-                      title: 'RELAY',
-                      icon: Icons.alt_route,
-                      isSelected: _mode == SwitcherMode.relay,
-                      onTap: () => _changeMode(SwitcherMode.relay),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
+
                   Expanded(
                     child: _ModeButton(
                       title: 'API',
@@ -1664,7 +1656,7 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
               child: Row(
                 children: [
                   // REC Button
-                  GestureDetector(
+                  SafeArea(child: GestureDetector(
                     onTap: _toggleTricasterRecord,
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 300),
@@ -1687,7 +1679,7 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
                         )),
                       ),
                     ),
-                  ),
+                  )),
                   const SizedBox(width: 12),
                   
                   // TAKE
@@ -1824,19 +1816,6 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
                         children: [
                           const Padding(
                             padding: EdgeInsets.only(bottom: 4),
-                            child: Text('  PREVIEW (B)', style: TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
-                          ),
-                          Expanded(
-                            child: Row(
-                              children: List.generate(
-                                (_mode == SwitcherMode.api) ? 8 : widget.sources.length,
-                                (i) => Expanded(child: _buildCamButton(i, false)),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          const Padding(
-                            padding: EdgeInsets.only(bottom: 4),
                             child: Text('  PROGRAM (A)', style: TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
                           ),
                           Expanded(
@@ -1844,6 +1823,19 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
                               children: List.generate(
                                 (_mode == SwitcherMode.api) ? 8 : widget.sources.length,
                                 (i) => Expanded(child: _buildCamButton(i, true)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 4),
+                            child: Text('  PREVIEW (B)', style: TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                          ),
+                          Expanded(
+                            child: Row(
+                              children: List.generate(
+                                (_mode == SwitcherMode.api) ? 8 : widget.sources.length,
+                                (i) => Expanded(child: _buildCamButton(i, false)),
                               ),
                             ),
                           ),

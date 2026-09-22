@@ -110,6 +110,12 @@ class NDIView: NSObject, FlutterPlatformView {
         case "refreshSources":
             refreshSources()
             result(true)
+        case "reconnect":
+            if let name = self.currentSourceName {
+                print("🔄 Forcing NDI reconnection for \(name)")
+                self.startReceive(sourceName: name, quality: self.currentQuality)
+            }
+            result(true)
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -240,7 +246,12 @@ class NDIView: NSObject, FlutterPlatformView {
         let width = Int(frame.xres)
         let height = Int(frame.yres)
         let stride = Int(frame.line_stride_in_bytes)
-        guard let p_data = frame.p_data else { return }
+        
+        // SAFEGUARD AGAINST CRASH ON EMPTY/INVALID FRAME (e.g., video loop restart)
+        guard let p_data = frame.p_data, width > 0, height > 0, stride >= width * 4 else { 
+            print("⚠️ Ignoring invalid video frame.")
+            return 
+        }
         
         // AGGRESSIVE MEMORY CLEANUP: Move all objects inside the pool
         autoreleasepool {
