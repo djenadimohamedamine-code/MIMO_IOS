@@ -256,9 +256,9 @@ class NDIManager: NSObject {
                 // branche existante et produit un flux NDI muet.
                 audioOutput.audioSettings = [
                     AVFormatIDKey: kAudioFormatLinearPCM,
-                    AVLinearPCMBitDepthKey: 16,
-                    AVLinearPCMIsFloatKey: false,
-                    AVLinearPCMIsNonInterleavedKey: false,
+                    "AVLinearPCMBitDepthKey": 16,
+                    "AVLinearPCMIsFloatKey": false,
+                    "AVLinearPCMIsNonInterleaved": false,
                     AVNumberOfChannelsKey: 1,
                     AVSampleRateKey: 48000.0
                 ]
