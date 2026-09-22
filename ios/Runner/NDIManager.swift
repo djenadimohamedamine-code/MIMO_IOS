@@ -258,7 +258,7 @@ class NDIManager: NSObject {
                     AVFormatIDKey: kAudioFormatLinearPCM,
                     AVLinearPCMBitDepthKey: 16,
                     AVLinearPCMIsFloatKey: false,
-                    AVLinearPCMIsNonInterleaved: false,
+                    AVLinearPCMIsNonInterleavedKey: false,
                     AVNumberOfChannelsKey: 1,
                     AVSampleRateKey: 48000.0
                 ]
