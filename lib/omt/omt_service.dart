@@ -93,6 +93,10 @@ class OMTService {
         return OMTConnectionState.idle;
       case 'discovering':
         return OMTConnectionState.discovering;
+      case 'listening':
+        return OMTConnectionState.listening;
+      case 'connected':
+        return OMTConnectionState.connected;
       case 'connecting':
         return OMTConnectionState.connecting;
       case 'transmitting':

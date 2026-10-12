@@ -13,4 +13,7 @@
 #import "Processing.NDI.Lib.h"
 #pragma clang diagnostic pop
 
+// OMT VMX1 Codec Bridge
+#import "OMTVMXBridge.h"
+
 #endif /* NDI_Bridging_Header_h */

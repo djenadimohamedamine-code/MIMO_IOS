@@ -185,14 +185,24 @@ class _OMTScreenState extends State<OMTScreen>
         stateLabel = 'Découverte réseau...';
         stateIcon = Icons.radar;
         break;
+      case OMTConnectionState.listening:
+        stateColor = Colors.amber;
+        stateLabel = 'En écoute — En attente de vMix 29 (Port 7788)';
+        stateIcon = Icons.wifi_tethering;
+        break;
+      case OMTConnectionState.connected:
+        stateColor = Colors.lightBlueAccent;
+        stateLabel = 'vMix 29 connecté — En attente d\'abonnement';
+        stateIcon = Icons.link;
+        break;
       case OMTConnectionState.connecting:
         stateColor = Colors.orangeAccent;
-        stateLabel = 'Connexion...';
+        stateLabel = 'Initialisation...';
         stateIcon = Icons.sync;
         break;
       case OMTConnectionState.transmitting:
         stateColor = Colors.greenAccent;
-        stateLabel = 'Transmission OMT ACTIVE';
+        stateLabel = 'En direct — Diffusion OMT active vers vMix 29';
         stateIcon = Icons.fiber_manual_record;
         break;
       case OMTConnectionState.receiving:
@@ -202,7 +212,7 @@ class _OMTScreenState extends State<OMTScreen>
         break;
       case OMTConnectionState.disconnecting:
         stateColor = Colors.orange;
-        stateLabel = 'Déconnexion...';
+        stateLabel = 'Arrêt en cours...';
         stateIcon = Icons.sync_disabled;
         break;
       case OMTConnectionState.error:
@@ -283,7 +293,9 @@ class _OMTScreenState extends State<OMTScreen>
   // ─── SEND TAB ─────────────────────────────────────────────────────────────
 
   Widget _buildSendTab() {
-    final bool isSending = _connectionState == OMTConnectionState.transmitting;
+    final bool isSending = _connectionState == OMTConnectionState.transmitting ||
+        _connectionState == OMTConnectionState.listening ||
+        _connectionState == OMTConnectionState.connected;
     final bool isBusy = _connectionState == OMTConnectionState.connecting ||
         _connectionState == OMTConnectionState.disconnecting;
 
@@ -399,7 +411,9 @@ class _OMTScreenState extends State<OMTScreen>
           _buildInfoBox(),
 
           // Stats when active
-          if (_connectionState == OMTConnectionState.transmitting &&
+          if ((_connectionState == OMTConnectionState.transmitting ||
+               _connectionState == OMTConnectionState.listening ||
+               _connectionState == OMTConnectionState.connected) &&
               _stats.isNotEmpty) ...[
             const SizedBox(height: 20),
             _buildStatsPanel(),
@@ -436,8 +450,8 @@ class _OMTScreenState extends State<OMTScreen>
             '1. Connectez l\'iPhone et vMix au même réseau local Wi-Fi\n'
             '2. Appuyez sur "Démarrer la transmission OMT"\n'
             '3. Dans vMix → Add Input → OMT\n'
-            '4. Sélectionnez "MIMO_NDI Camera" (ou le nom saisi)\n'
-            '5. La source communique via TCP sur le port 7788',
+            '4. Sélectionnez votre iPhone (annoncé automatiquement via Bonjour)\n'
+            '5. La source communique via TCP sur le port 7788 en codec VMX1 natif',
             style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.5),
           ),
         ],
@@ -456,17 +470,19 @@ class _OMTScreenState extends State<OMTScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('📊 Statistiques de transmission',
+          const Text('📊 Statistiques de transmission OMT',
               style: TextStyle(
                   color: Colors.greenAccent,
                   fontWeight: FontWeight.bold,
                   fontSize: 13)),
           const SizedBox(height: 10),
-          _statsRow('FPS réel', '${_stats['fps'] ?? '—'}'),
-          _statsRow('Bitrate', '${_stats['bitrateKbps'] ?? '—'} Kbps'),
-          _statsRow('Trames envoyées', '${_stats['framesSent'] ?? '—'}'),
-          _statsRow('Connexions actives', '${_stats['activeConnections'] ?? '—'}'),
-          _statsRow('Format vidéo', '${_stats['codec'] ?? 'NV12 / UYVY'}'),
+          _statsRow('Format / Codec', '${_stats['codec'] ?? 'VMX1 (vMix 29 Native)'}'),
+          _statsRow('FPS réel capturé', '${_stats['fps'] ?? '—'}'),
+          _statsRow('Débit réseau réel', '${_stats['bitrateKbps'] ?? '0'} Kbps'),
+          _statsRow('Trames transmises', '${_stats['framesSent'] ?? '0'}'),
+          _statsRow('Trames abandonnées (drops)', '${_stats['framesDropped'] ?? '0'}'),
+          _statsRow('Récepteurs connectés', '${_stats['activeConnections'] ?? '0'}'),
+          _statsRow('Abonnés vidéo actifs', '${_stats['subscribedConnections'] ?? '0'}'),
         ],
       ),
     );

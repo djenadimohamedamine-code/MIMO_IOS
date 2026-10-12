@@ -14,7 +14,12 @@ enum OMTFrameType: UInt8 {
 
 /// OMT Video Codec FourCC (Little-Endian)
 struct OMTVideoCodec {
-    /// 'UYVY' — raw 4:2:2 YCbCr (universally supported, no codec library needed)
+    /// 'VMX1' — vMix 1 video codec (official compressed codec for OMT)
+    /// ('V' | ('M' << 8) | ('X' << 16) | ('1' << 24)) = 0x31584D56
+    static let vmx1: Int32 = 0x31584D56
+    
+    /// 'UYVY' — raw 4:2:2 YCbCr (uncompressed fallback)
+    /// ('U' | ('Y' << 8) | ('V' << 16) | ('Y' << 24)) = 0x59565955
     static let uyvy: Int32 = 0x59565955
 }
 
@@ -28,6 +33,39 @@ struct OMTColorSpace {
 /// OMT Video Flags
 struct OMTVideoFlags {
     static let none: Int32 = 0
+    static let interlaced: Int32 = 1
+    static let alpha: Int32 = 2
+    static let preMultiplied: Int32 = 4
+    static let preview: Int32 = 8
+    static let highBitDepth: Int32 = 16
+}
+
+/// Official OMT Fixed Metadata Command Strings (from libomtnet OMTMetadataConstants)
+struct OMTMetadataCommand {
+    static let subscribeVideo = "<OMTSubscribe Video=\"true\" />"
+    static let unsubscribeVideo = "<OMTSubscribe Video=\"false\" />"
+    static let subscribeAudio = "<OMTSubscribe Audio=\"true\" />"
+    static let unsubscribeAudio = "<OMTSubscribe Audio=\"false\" />"
+    static let subscribeMetadata = "<OMTSubscribe Metadata=\"true\" />"
+    static let previewOn = "<OMTSettings Preview=\"true\" />"
+    static let previewOff = "<OMTSettings Preview=\"false\" />"
+    
+    // NB: Double == typo is in official libomtnet specification for backwards compatibility
+    static let tallyPreview = "<OMTTally Preview=\"true\" Program==\"false\" />"
+    static let tallyProgram = "<OMTTally Preview=\"false\" Program==\"true\" />"
+    static let tallyPreviewProgram = "<OMTTally Preview=\"true\" Program==\"true\" />"
+    static let tallyNone = "<OMTTally Preview=\"false\" Program==\"false\" />"
+}
+
+/// Parsed client commands received over TCP
+enum OMTCommand {
+    case subscribeVideo(Bool)
+    case subscribeAudio(Bool)
+    case subscribeMetadata(Bool)
+    case setPreview(Bool)
+    case setQuality(String)
+    case tally(preview: Bool, program: Bool)
+    case unknown(String)
 }
 
 // MARK: - OMT Frame Builder
@@ -46,87 +84,135 @@ class OMTFrameBuilder {
     
     // MARK: - Video Frame
     
-    /// Build a complete OMT video frame from raw UYVY pixel data.
+    /// Build a complete OMT video frame.
     /// Protocol layout (all LE):
     ///   HEADER (16 bytes): Version(1) + FrameType(1) + Timestamp(8) + MetadataLen(2) + DataLen(4)
     ///   VIDEO EXT HEADER (32 bytes): Codec(4) + W(4) + H(4) + FRN(4) + FRD(4) + AR(4) + Flags(4) + CS(4)
-    ///   DATA: raw pixel bytes
+    ///   DATA: compressed VMX1 bitstream or raw pixel bytes
     static func buildVideoFrame(
-        pixelData: Data,
+        payloadData: Data,
+        codec: Int32 = OMTVideoCodec.vmx1,
         width: Int32,
         height: Int32,
         frameRateN: Int32,
         frameRateD: Int32,
+        flags: Int32 = OMTVideoFlags.none,
         colorSpace: Int32 = OMTColorSpace.bt709
     ) -> Data {
         let timestamp = makeTimestamp()
         let aspectRatio = Float(width) / Float(height)
         
-        // DataLength = extended header + pixel data (excludes main header)
-        let totalDataLength = Int32(32 + pixelData.count)
+        // DataLength = extended header (32 bytes) + video payload data (excludes main 16-byte header)
+        let totalDataLength = Int32(32 + payloadData.count)
         
         var frame = Data()
-        frame.reserveCapacity(16 + 32 + pixelData.count)
+        frame.reserveCapacity(16 + 32 + payloadData.count)
         
         // ─── MAIN HEADER (16 bytes) ───────────────────────────────────────
-        frame.appendByte(kProtocolVersion)                      // Version BYTE
-        frame.appendByte(OMTFrameType.video.rawValue)           // FrameType BYTE
+        frame.appendByte(kProtocolVersion)                      // Version BYTE (1)
+        frame.appendByte(OMTFrameType.video.rawValue)           // FrameType BYTE (2)
         frame.appendLE(timestamp)                               // Timestamp INT64
         frame.appendLE(UInt16(0))                               // MetadataLength UINT16
         frame.appendLE(totalDataLength)                         // DataLength INT32
         
         // ─── VIDEO EXTENDED HEADER (32 bytes) ─────────────────────────────
-        frame.appendLE(OMTVideoCodec.uyvy)                      // Codec INT32
+        frame.appendLE(codec)                                   // Codec INT32 (VMX1 or UYVY)
         frame.appendLE(width)                                   // Width INT32
         frame.appendLE(height)                                  // Height INT32
         frame.appendLE(frameRateN)                              // FrameRateN INT32
         frame.appendLE(frameRateD)                              // FrameRateD INT32
         frame.appendLE(aspectRatio)                             // AspectRatio FLOAT32
-        frame.appendLE(OMTVideoFlags.none)                      // Flags INT32
+        frame.appendLE(flags)                                   // Flags INT32
         frame.appendLE(colorSpace)                              // ColorSpace INT32
         
         // ─── DATA ─────────────────────────────────────────────────────────
-        frame.append(pixelData)
+        frame.append(payloadData)
         
         return frame
     }
     
     // MARK: - Metadata Frame
     
-    /// Build an OMT metadata frame (XML UTF-8 payload)
+    /// Build an OMT metadata frame (XML UTF-8 payload with mandatory null terminator)
     static func buildMetadataFrame(xmlString: String) -> Data {
         guard var xmlData = xmlString.data(using: .utf8) else { return Data() }
-        xmlData.append(0) // null terminator required by protocol
+        xmlData.append(0) // Null terminator required by OMT protocol specification
         
         let metadataLength = UInt16(xmlData.count)
         let totalDataLength = Int32(xmlData.count)
         let timestamp = makeTimestamp()
         
         var frame = Data()
-        frame.appendByte(kProtocolVersion)
-        frame.appendByte(OMTFrameType.metadata.rawValue)
-        frame.appendLE(timestamp)
-        frame.appendLE(metadataLength)
-        frame.appendLE(totalDataLength)
+        frame.appendByte(kProtocolVersion)                      // Version BYTE (1)
+        frame.appendByte(OMTFrameType.metadata.rawValue)        // FrameType BYTE (1)
+        frame.appendLE(timestamp)                               // Timestamp INT64
+        frame.appendLE(metadataLength)                          // MetadataLength UINT16
+        frame.appendLE(totalDataLength)                         // DataLength INT32
         frame.append(xmlData)
         
         return frame
     }
     
-    // MARK: - Source Identity XML
+    // MARK: - Source Identity XML (Official OMT <OMTInfo ... />)
     
-    /// Generates the initial metadata that identifies this source to vMix 29.
-    static func buildSenderIdentityXML(sourceName: String, width: Int32, height: Int32,
-                                        frameRateN: Int32, frameRateD: Int32) -> String {
-        let escaped = xmlEscape(sourceName)
-        return """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <ndi>
-          <source name="\(escaped)" />
-          <video width="\(width)" height="\(height)" frame_rate_n="\(frameRateN)" frame_rate_d="\(frameRateD)" />
-          <generator name="MIMO_NDI" version="1.0" />
-        </ndi>
-        """
+    /// Generates the official OMT source identity metadata sent to receivers (vMix 29) on connect.
+    static func buildSenderIdentityXML(productName: String = "MIMO_NDI",
+                                        manufacturer: String = "MIMO",
+                                        version: String = "1.0") -> String {
+        let p = xmlEscape(productName)
+        let m = xmlEscape(manufacturer)
+        let v = xmlEscape(version)
+        return "<OMTInfo ProductName=\"\(p)\" Manufacturer=\"\(m)\" Version=\"\(v)\" />"
+    }
+    
+    // MARK: - Command Parser
+    
+    /// Parses incoming XML metadata command from a receiver (e.g. vMix 29).
+    static func parseCommand(from xmlString: String) -> OMTCommand {
+        let trimmed = xmlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        if trimmed == OMTMetadataCommand.subscribeVideo || trimmed.contains("Video=\"true\"") {
+            return .subscribeVideo(true)
+        }
+        if trimmed == OMTMetadataCommand.unsubscribeVideo || trimmed.contains("Video=\"false\"") {
+            return .subscribeVideo(false)
+        }
+        if trimmed == OMTMetadataCommand.subscribeAudio || trimmed.contains("Audio=\"true\"") {
+            return .subscribeAudio(true)
+        }
+        if trimmed == OMTMetadataCommand.unsubscribeAudio || trimmed.contains("Audio=\"false\"") {
+            return .subscribeAudio(false)
+        }
+        if trimmed == OMTMetadataCommand.subscribeMetadata || trimmed.contains("Metadata=\"true\"") {
+            return .subscribeMetadata(true)
+        }
+        if trimmed == OMTMetadataCommand.previewOn || (trimmed.contains("Preview=\"true\"") && trimmed.contains("OMTSettings")) {
+            return .setPreview(true)
+        }
+        if trimmed == OMTMetadataCommand.previewOff || (trimmed.contains("Preview=\"false\"") && trimmed.contains("OMTSettings")) {
+            return .setPreview(false)
+        }
+        if trimmed.contains("<OMTSettings Quality=") {
+            if let range = trimmed.range(of: "Quality=\"([^\"]+)\"", options: .regularExpression) {
+                let match = String(trimmed[range])
+                let quality = match.replacingOccurrences(of: "Quality=\"", with: "").replacingOccurrences(of: "\"", with: "")
+                return .setQuality(quality)
+            }
+        }
+        if trimmed == OMTMetadataCommand.tallyProgram {
+            return .tally(preview: false, program: true)
+        }
+        if trimmed == OMTMetadataCommand.tallyPreview {
+            return .tally(preview: true, program: false)
+        }
+        if trimmed == OMTMetadataCommand.tallyPreviewProgram {
+            return .tally(preview: true, program: true)
+        }
+        if trimmed == OMTMetadataCommand.tallyNone {
+            return .tally(preview: false, program: false)
+        }
+        
+        return .unknown(trimmed)
     }
     
     private static func xmlEscape(_ s: String) -> String {

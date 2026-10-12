@@ -24,8 +24,8 @@ class OMTVideoCapture: NSObject {
     
     // MARK: - Callbacks
     
-    /// Called on each captured frame with UYVY pixel data
-    var onFrame: ((Data, Config) -> Void)?
+    /// Called on each captured frame with UYVY pixel data and actual dimensions
+    var onFrame: ((Data, Int32, Int32) -> Void)?
     var onError: ((String) -> Void)?
     
     // MARK: - State
@@ -108,7 +108,7 @@ class OMTVideoCapture: NSObject {
             session.addInput(input)
         }
         
-        // Configure video output — request standard iOS biplanar YCbCr format
+        // Configure video output — request standard iOS biplanar YCbCr format (NV12)
         let output = AVCaptureVideoDataOutput()
         output.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
@@ -126,11 +126,16 @@ class OMTVideoCapture: NSObject {
             session.sessionPreset = preset
         }
         
-        // Set video orientation
+        // Set video orientation based on aspect ratio
         if let connection = output.connection(with: .video) {
-            connection.videoOrientation = .portrait
+            if config.width >= config.height {
+                // Broadcast standard is landscape for 16:9 resolutions (1080p, 720p)
+                connection.videoOrientation = .landscapeRight
+            } else {
+                connection.videoOrientation = .portrait
+            }
             if config.useFrontCamera {
-                connection.isVideoMirrored = false
+                connection.isVideoMirrored = true
             }
         }
         
@@ -143,9 +148,10 @@ class OMTVideoCapture: NSObject {
     }
     
     private func selectSessionPreset(width: Int, height: Int) -> AVCaptureSession.Preset {
-        if width >= 3840 { return .hd4K3840x2160 }
-        if width >= 1920 { return .hd1920x1080 }
-        if width >= 1280 { return .hd1280x720 }
+        let maxDim = max(width, height)
+        if maxDim >= 3840 { return .hd4K3840x2160 }
+        if maxDim >= 1920 { return .hd1920x1080 }
+        if maxDim >= 1280 { return .hd1280x720 }
         return .vga640x480
     }
 }
@@ -157,8 +163,7 @@ extension OMTVideoCapture: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput,
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
-        guard let config = self.config,
-              let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             return
         }
         
@@ -217,12 +222,12 @@ extension OMTVideoCapture: AVCaptureVideoDataOutputSampleBufferDelegate {
             }
         }
         
-        onFrame?(uyvyData, config)
+        onFrame?(uyvyData, Int32(width), Int32(height))
     }
     
     func captureOutput(_ output: AVCaptureOutput,
                        didDrop sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
-        // Frame dropped — normal under heavy load
+        // Frame dropped by AVCapture — normal under high load
     }
 }

@@ -8,11 +8,13 @@ begin
   # 1. Config Builder Settings
   target.build_configurations.each do |config|
     config.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = 'Runner/Runner-Bridging-Header.h'
-    # Include NDI headers AND Flutter's generated headers (for GeneratedPluginRegistrant.h)
-    config.build_settings['HEADER_SEARCH_PATHS'] = '$(inherited) $(PROJECT_DIR)/NDISDK/include $(SRCROOT)/Flutter'
+    # Include NDI headers AND Flutter's generated headers AND OMT/libvmx headers
+    config.build_settings['HEADER_SEARCH_PATHS'] = '$(inherited) $(PROJECT_DIR)/NDISDK/include $(SRCROOT)/Flutter $(SRCROOT)/Runner $(SRCROOT)/Runner/libvmx'
     config.build_settings['LIBRARY_SEARCH_PATHS'] = '$(inherited) $(PROJECT_DIR)/NDISDK/lib'
     config.build_settings['ENABLE_BITCODE'] = 'NO'
     config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+    config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17'
+    config.build_settings['CLANG_CXX_LIBRARY'] = 'libc++'
     # Never treat warnings as errors (fixes 3rd-party pod deprecation warnings)
     config.build_settings['SWIFT_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
     config.build_settings['GCC_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
@@ -27,11 +29,14 @@ begin
     config.build_settings['OTHER_LDFLAGS'] = '$(inherited) -all_load -ObjC'
   end
 
-  # 2. Add Swift files to the project
+  # 2. Add Swift and C++/ObjC files to the project
   group = project.main_group.find_subpath('Runner', true)
   files = [
     'NDIManager.swift', 'NDIView.swift', 'NdiCameraPreview.swift', 'CrashLogger.swift', 'Runner-Bridging-Header.h',
-    'OMTProtocol.swift', 'OMTDiscovery.swift', 'OMTVideoCapture.swift', 'OMTSender.swift', 'OMTManager.swift'
+    'OMTProtocol.swift', 'OMTDiscovery.swift', 'OMTVideoCapture.swift', 'OMTSender.swift', 'OMTManager.swift',
+    'OMTVideoEncoder.swift', 'OMTVMXBridge.h', 'OMTVMXBridge.mm',
+    'libvmx/vmxcodec.h', 'libvmx/vmxcodec.cpp', 'libvmx/vmxcodec_arm.h', 'libvmx/vmxcodec_arm.cpp',
+    'libvmx/vmxcodec_common.h', 'libvmx/thread_tasks.h', 'libvmx/sse2neon.h', 'libvmx/framework.h', 'libvmx/pch.h'
   ]
 
   files.each do |f|

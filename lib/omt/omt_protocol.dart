@@ -70,6 +70,8 @@ const int kOMTProtocolVersion = 1;
 enum OMTConnectionState {
   idle,
   discovering,
+  listening,
+  connected,
   connecting,
   transmitting,
   receiving,

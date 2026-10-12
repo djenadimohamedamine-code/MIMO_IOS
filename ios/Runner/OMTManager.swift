@@ -23,8 +23,9 @@ import AVFoundation
     enum State: String {
         case idle = "idle"
         case discovering = "discovering"
-        case connecting = "connecting"
-        case transmitting = "transmitting"
+        case listening = "listening"        // Port open, published via Bonjour, 0 clients
+        case connected = "connected"        // vMix 29 connected, waiting for subscription
+        case transmitting = "transmitting"  // vMix 29 subscribed and actively streaming
         case receiving = "receiving"
         case disconnecting = "disconnecting"
         case error = "error"
@@ -43,7 +44,6 @@ import AVFoundation
     // MARK: - Stats
     
     private var currentState: State = .idle
-    private var framesSentTotal: Int64 = 0
     private var lastBitrateCalcTime: Date = Date()
     private var bytesSinceLastCalc: Int64 = 0
     private var currentBitrateKbps: Double = 0
@@ -62,7 +62,7 @@ import AVFoundation
     
     /// Called from AppDelegate to register the MethodChannel and EventChannel
     func register(with registrar: FlutterPluginRegistrar) {
-        // Nothing — channel is set up from AppDelegate directly
+        // Registered from AppDelegate directly
     }
     
     // MARK: - Method Channel Handler
@@ -87,7 +87,7 @@ import AVFoundation
             handleGetSources(result: result)
             
         case "connectToSource":
-            // Reception — Phase 2 (not yet implemented)
+            // Reception — Phase 2
             result(false)
             
         case "disconnect":
@@ -126,7 +126,7 @@ import AVFoundation
             return
         }
         
-        let sourceName = args["sourceName"] as? String ?? "MIMO_NDI Camera"
+        let sourceName = args["sourceName"] as? String ?? "MIMO Camera"
         let width = Int32(args["width"] as? Int ?? 1920)
         let height = Int32(args["height"] as? Int ?? 1080)
         let frameRateN = Int32(args["frameRateN"] as? Int ?? 30000)
@@ -136,7 +136,7 @@ import AVFoundation
         // Stop any existing sending
         stopAllSending()
         
-        setState(.connecting)
+        setState(.listening)
         
         // Create and start sender (TCP server waiting for receiver connections)
         let newSender = OMTSender(
@@ -151,17 +151,16 @@ import AVFoundation
         newSender.onStateChanged = { [weak self] senderState in
             guard let self = self else { return }
             switch senderState {
+            case .idle:
+                self.setState(.idle)
             case .listening:
-                // Ready and waiting for vMix to connect
-                // We move to transmitting state to let UI show active state
-                // even before a receiver connects (we are broadcasting-ready)
-                self.setState(.transmitting)
-            case .hasConnections:
+                self.setState(.listening)
+            case .connected:
+                self.setState(.connected)
+            case .transmitting:
                 self.setState(.transmitting)
             case .error:
                 self.setState(.error)
-            default:
-                break
             }
         }
         
@@ -171,7 +170,17 @@ import AVFoundation
         }
         
         newSender.onConnectionCountChanged = { [weak self] count in
-            NSLog("[OMTManager] Active receivers: %d", count)
+            NSLog("[OMTManager] Connected receivers: %d", count)
+            self?.sendStatsUpdate()
+        }
+        
+        newSender.onSubscribedCountChanged = { [weak self] count in
+            NSLog("[OMTManager] Subscribed receivers: %d", count)
+            self?.sendStatsUpdate()
+        }
+        
+        newSender.onBytesSent = { [weak self] bytes in
+            self?.updateBitrateStats(bytes: bytes)
         }
         
         newSender.start()
@@ -187,9 +196,8 @@ import AVFoundation
         )
         
         let capture = OMTVideoCapture()
-        capture.onFrame = { [weak self, weak newSender] pixelData, config in
+        capture.onFrame = { [weak newSender] pixelData, actualW, actualH in
             newSender?.sendVideoFrame(pixelData: pixelData)
-            self?.updateBitrateStats(bytes: Int64(pixelData.count))
         }
         capture.onError = { [weak self] errorMsg in
             self?.sendEvent(["type": "error", "message": "Camera: \(errorMsg)"])
@@ -200,7 +208,7 @@ import AVFoundation
         // Start stats timer
         startStatsTimer()
         
-        NSLog("[OMTManager] Started sending '%@' at %dx%d", sourceName, width, height)
+        NSLog("[OMTManager] Started OMT service '%@' (%dx%d)", sourceName, width, height)
         result(true)
     }
     
@@ -249,7 +257,6 @@ import AVFoundation
         sender?.stop()
         sender = nil
         
-        framesSentTotal = 0
         bytesSinceLastCalc = 0
         currentBitrateKbps = 0
     }
@@ -266,22 +273,33 @@ import AVFoundation
         }
     }
     
+    private func sendStatsUpdate() {
+        sendEvent(buildStatsDict())
+    }
+    
     private func buildStatsDict() -> [String: Any] {
         let fps = videoCapture?.measuredFPS ?? 0
         let connections = sender?.activeConnectionCount ?? 0
+        let subscribed = sender?.subscribedConnectionCount ?? 0
+        let framesSent = sender?.framesSentTotal ?? 0
+        let framesDropped = sender?.framesDroppedTotal ?? 0
+        let isVMX = sender?.isUsingVMX1 ?? false
+        let codecName = isVMX ? "VMX1 (vMix 29 Native)" : "UYVY (4:2:2 Raw)"
+        
         return [
             "type": "stats",
             "fps": String(format: "%.1f", fps),
             "bitrateKbps": Int(currentBitrateKbps),
-            "framesSent": framesSentTotal,
+            "framesSent": framesSent,
+            "framesDropped": framesDropped,
             "activeConnections": connections,
-            "codec": "UYVY (4:2:2)",
+            "subscribedConnections": subscribed,
+            "codec": codecName,
             "state": currentState.rawValue
         ]
     }
     
     private func updateBitrateStats(bytes: Int64) {
-        framesSentTotal += 1
         bytesSinceLastCalc += bytes
         
         let now = Date()
@@ -297,7 +315,7 @@ import AVFoundation
         statsTimer?.invalidate()
         statsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            if self.currentState == .transmitting {
+            if self.currentState == .transmitting || self.currentState == .listening || self.currentState == .connected {
                 self.sendEvent(self.buildStatsDict())
             }
         }
