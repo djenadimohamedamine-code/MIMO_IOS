@@ -12,6 +12,7 @@ import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'midas_m32.dart';
+import 'omt/omt_screen.dart';
 
 void main() async {
   _diagLog('­ƒÜÇ App Launching...');
@@ -164,7 +165,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 
-  final List<String> _titles = ["LivePanel Officiel", "Reception Flux", "Transmettre Camera", "Multiview 4", "Regie Mobile", "Midas M32", "À propos"];
+  final List<String> _titles = ["LivePanel Officiel", "Reception Flux", "Transmettre Camera", "Multiview 4", "Regie Mobile", "Midas M32", "À propos", "OMT — Open Media Transport"];
 
   List<Widget> get _pages => [
         _selectedIndex == 0 ? const LivePanelScreen() : const SizedBox.shrink(),
@@ -174,6 +175,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         _selectedIndex == 4 ? SwitcherScreen(sources: _sources, onRefresh: _startGlobalScan) : const SizedBox.shrink(),
         _selectedIndex == 5 ? const MidasM32Screen() : const SizedBox.shrink(),
         _selectedIndex == 6 ? const AboutScreen() : const SizedBox.shrink(),
+        // ─── OMT — Open Media Transport (index 7, complètement indépendant de NDI) ───
+        _selectedIndex == 7 ? const OMTScreen() : const SizedBox.shrink(),
       ];
 
   @override
@@ -284,6 +287,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           _drawerItem(4, Icons.cut, 'Regie Mobile'),
           _drawerItem(5, Icons.graphic_eq, 'Midas M32'),
           _drawerItem(6, Icons.info_outline, 'À propos'),
+          _drawerItem(7, Icons.cast_connected, 'OMT — Open Media Transport'),
           const Divider(color: Colors.white24),
           ListTile(
             leading: const Icon(Icons.settings, color: Colors.blueAccent),

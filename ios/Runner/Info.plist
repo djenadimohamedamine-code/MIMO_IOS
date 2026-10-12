@@ -47,6 +47,7 @@
 		<key>NSBonjourServices</key>
 		<array>
 			<string>_ndi._tcp</string>
+			<string>_omt._tcp</string>
 		</array>
 
 		<!-- CAMERA & MICROPHONE FOR SENDING -->

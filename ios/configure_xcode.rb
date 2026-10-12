@@ -38,8 +38,19 @@ begin
     end
   end
 
-  # 3. Add Native iOS Frameworks (AJOUT DE ACCELERATE POUR NDI)
-  ['VideoToolbox.framework', 'AudioToolbox.framework', 'CoreMedia.framework', 'CoreVideo.framework', 'Accelerate.framework'].each do |framework|
+  # 2b. Add OMT Swift files to the project
+  omt_group = group.find_subpath('OMT', true)
+  omt_files = ['OMTProtocol.swift', 'OMTDiscovery.swift', 'OMTVideoCapture.swift', 'OMTSender.swift', 'OMTManager.swift']
+  omt_files.each do |f|
+    file_ref = omt_group.find_file_by_path(f)
+    if file_ref.nil?
+      file_ref = omt_group.new_file(f)
+      target.source_build_phase.add_file_reference(file_ref)
+    end
+  end
+
+  # 3. Add Native iOS Frameworks (AJOUT DE ACCELERATE POUR NDI, NETWORK POUR OMT)
+  ['VideoToolbox.framework', 'AudioToolbox.framework', 'CoreMedia.framework', 'CoreVideo.framework', 'Accelerate.framework', 'Network.framework'].each do |framework|
     path = "System/Library/Frameworks/#{framework}"
     file_ref = project.frameworks_group.find_file_by_path(framework) || project.frameworks_group.new_file(path, :developer_dir)
     target.frameworks_build_phase.add_file_reference(file_ref)
