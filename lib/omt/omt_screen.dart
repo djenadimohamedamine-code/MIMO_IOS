@@ -26,6 +26,7 @@ class _OMTScreenState extends State<OMTScreen>
   OMTResolution _selectedResolution = OMTResolution.hd1080p;
   OMTFrameRate _selectedFrameRate = OMTFrameRate.fps30;
   bool _useFrontCamera = false;
+  bool _isTestPattern = false;
   Map<String, dynamic> _stats = {};
 
   // Discovery tab state
@@ -119,6 +120,20 @@ class _OMTScreenState extends State<OMTScreen>
     setState(() => _connectionState = OMTConnectionState.disconnecting);
     await _omtService.stopSending();
     if (mounted) setState(() => _connectionState = OMTConnectionState.idle);
+  }
+
+  Future<void> _toggleTestPattern(bool val) async {
+    setState(() => _isTestPattern = val);
+    await _omtService.setTestPattern(val);
+  }
+
+  Future<void> _onCameraSwitch(bool val) async {
+    setState(() => _useFrontCamera = val);
+    if (_connectionState == OMTConnectionState.transmitting ||
+        _connectionState == OMTConnectionState.listening ||
+        _connectionState == OMTConnectionState.connected) {
+      await _omtService.switchCamera(useFrontCamera: val);
+    }
   }
 
   @override
@@ -360,11 +375,27 @@ class _OMTScreenState extends State<OMTScreen>
                 Switch(
                   value: _useFrontCamera,
                   activeColor: Colors.greenAccent,
-                  onChanged: isSending
-                      ? null
-                      : (v) => setState(() => _useFrontCamera = v),
+                  onChanged: (v) => _onCameraSwitch(v),
                 ),
                 const Text('Avant', style: TextStyle(color: Colors.white70)),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Diagnostic Test Pattern (SMPTE Color Bars)
+          _buildFormField(
+            label: 'Mire de diagnostic (vMix 29)',
+            child: Row(
+              children: [
+                const Text('Caméra', style: TextStyle(color: Colors.white70)),
+                Switch(
+                  value: _isTestPattern,
+                  activeColor: Colors.amberAccent,
+                  onChanged: (v) => _toggleTestPattern(v),
+                ),
+                const Text('Mire SMPTE', style: TextStyle(color: Colors.amberAccent, fontWeight: FontWeight.bold)),
               ],
             ),
           ),
@@ -460,6 +491,12 @@ class _OMTScreenState extends State<OMTScreen>
   }
 
   Widget _buildStatsPanel() {
+    final isTest = _stats['testPatternActive'] == true || _isTestPattern;
+    final isVmxActive = _stats['isVMX1'] == true;
+    final w = _stats['actualWidth'] ?? 1920;
+    final h = _stats['actualHeight'] ?? 1080;
+    final encErr = _stats['encoderError'] ?? 'OK';
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -470,19 +507,44 @@ class _OMTScreenState extends State<OMTScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('📊 Statistiques de transmission OMT',
-              style: TextStyle(
-                  color: Colors.greenAccent,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('📊 Diagnostic & Télémétrie OMT',
+                  style: TextStyle(
+                      color: Colors.greenAccent,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isTest ? Colors.amber.withOpacity(0.2) : Colors.green.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: isTest ? Colors.amberAccent : Colors.greenAccent),
+                ),
+                child: Text(
+                  isTest ? 'MIRE SMPTE' : 'CAMÉRA',
+                  style: TextStyle(
+                      color: isTest ? Colors.amberAccent : Colors.greenAccent,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 10),
+          _statsRow('Résolution réelle', '${w}x$h'),
           _statsRow('Format / Codec', '${_stats['codec'] ?? 'VMX1 (vMix 29 Native)'}'),
+          _statsRow('Moteur VMX1 (NEON)', isVmxActive ? 'ACTIF (Compressé)' : 'INACTIF (Fallback)'),
+          if (encErr != 'OK')
+            _statsRow('Diagnostic Erreur', encErr),
           _statsRow('FPS réel capturé', '${_stats['fps'] ?? '—'}'),
           _statsRow('Débit réseau réel', '${_stats['bitrateKbps'] ?? '0'} Kbps'),
+          _statsRow('Trames encodées', '${_stats['framesEncoded'] ?? '0'}'),
           _statsRow('Trames transmises', '${_stats['framesSent'] ?? '0'}'),
           _statsRow('Trames abandonnées (drops)', '${_stats['framesDropped'] ?? '0'}'),
           _statsRow('Récepteurs connectés', '${_stats['activeConnections'] ?? '0'}'),
-          _statsRow('Abonnés vidéo actifs', '${_stats['subscribedConnections'] ?? '0'}'),
+          _statsRow('Abonnés vidéo vMix', '${_stats['subscribedConnections'] ?? '0'}'),
         ],
       ),
     );

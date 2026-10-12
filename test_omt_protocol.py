@@ -80,8 +80,19 @@ def run_tests():
     assert received_frames[1][0] == 1, "Frame 2 must be metadata"
     assert received_frames[1][1] == subscribe_cmd, "Frame 2 must match subscribe command exactly"
     print("[PASS] Test 4: TCP frame defragmentation & <OMTSubscribe Video=\"true\" /> extraction")
+
+    # Test 5: Dynamic dimensions support (e.g. 720p or 1080p adaptation)
+    test_720p = build_video_header(0x31584D56, 1280, 720, 30000, 1001, 1.7777778, 0, 709, 250000)
+    w_720, h_720 = struct.unpack('<ii', test_720p[20:28])
+    assert w_720 == 1280 and h_720 == 720, f"Expected 1280x720, got {w_720}x{h_720}"
+    test_1080p = build_video_header(0x31584D56, 1920, 1080, 30000, 1001, 1.7777778, 0, 709, 500000)
+    w_1080, h_1080 = struct.unpack('<ii', test_1080p[20:28])
+    assert w_1080 == 1920 and h_1080 == 1080, f"Expected 1920x1080, got {w_1080}x{h_1080}"
+    print("[PASS] Test 5: Dynamic video dimension adaptation (1280x720 and 1920x1080)")
+
     print("--------------------------------------------------")
-    print("RESULT: ALL 4 OMT SPEC PROTOCOL TESTS PASSED 100%!")
+    print("RESULT: ALL 5 OMT SPEC PROTOCOL TESTS PASSED 100%!")
 
 if __name__ == '__main__':
     run_tests()
+

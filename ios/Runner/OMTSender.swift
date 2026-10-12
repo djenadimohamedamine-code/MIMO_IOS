@@ -52,8 +52,8 @@ class OMTSender {
     
     let sourceName: String
     let port: NWEndpoint.Port
-    let width: Int32
-    let height: Int32
+    private(set) var currentWidth: Int32
+    private(set) var currentHeight: Int32
     let frameRateN: Int32
     let frameRateD: Int32
     
@@ -91,6 +91,14 @@ class OMTSender {
         return videoEncoder?.isVMX1Active ?? false
     }
     
+    var encoderLastError: String? {
+        return videoEncoder?.lastError
+    }
+    
+    var encodedFramesTotal: Int64 {
+        return videoEncoder?.encodedFrameCount ?? 0
+    }
+    
     // MARK: - Init
     
     init(sourceName: String,
@@ -101,8 +109,8 @@ class OMTSender {
          frameRateD: Int32) {
         self.sourceName = sourceName
         self.port = NWEndpoint.Port(integerLiteral: UInt16(port))
-        self.width = width
-        self.height = height
+        self.currentWidth = width
+        self.currentHeight = height
         self.frameRateN = frameRateN
         self.frameRateD = frameRateD
         
@@ -168,7 +176,7 @@ class OMTSender {
     
     /// Send a video frame to all subscribed receivers (vMix 29).
     /// Does NOT send to connections that have not subscribed yet.
-    func sendVideoFrame(pixelData: Data) {
+    func sendVideoFrame(pixelData: Data, width: Int32? = nil, height: Int32? = nil) {
         queue.async { [weak self] in
             guard let self = self else { return }
             
@@ -178,16 +186,23 @@ class OMTSender {
                 return
             }
             
+            let frameW = width ?? self.currentWidth
+            let frameH = height ?? self.currentHeight
+            if frameW != self.currentWidth || frameH != self.currentHeight {
+                self.currentWidth = frameW
+                self.currentHeight = frameH
+            }
+            
             // Encode frame using VMX1 (or fallback UYVY)
             guard let encoder = self.videoEncoder else { return }
-            let encoded = encoder.encode(uyvyData: pixelData)
+            let encoded = encoder.encode(uyvyData: pixelData, width: frameW, height: frameH)
             
             // Build binary OMT Video Frame
             let frameData = OMTFrameBuilder.buildVideoFrame(
                 payloadData: encoded.data,
                 codec: encoded.codec,
-                width: self.width,
-                height: self.height,
+                width: self.currentWidth,
+                height: self.currentHeight,
                 frameRateN: self.frameRateN,
                 frameRateD: self.frameRateD,
                 flags: OMTVideoFlags.none,
@@ -195,35 +210,38 @@ class OMTSender {
             )
             
             let frameByteCount = Int64(frameData.count)
-            
-            for session in subscribedSessions {
-                // Backpressure check: if previous frame send is still in flight, drop this frame
-                if session.isSending {
-                    session.framesDropped += 1
-                    self.framesDroppedTotal += 1
-                    continue
-                }
-                
-                session.isSending = true
-                session.framesSent += 1
-                self.framesSentTotal += 1
-                
-                session.connection.send(content: frameData, completion: .contentProcessed { [weak self, weak session] error in
-                    guard let self = self, let session = session else { return }
-                    self.queue.async {
-                        session.isSending = false
-                        if let error = error {
-                            NSLog("[OMTSender] Connection send error for %@: %@",
-                                  session.remoteEndpoint, error.localizedDescription)
-                            self.removeSession(id: session.id)
-                        } else {
-                            session.bytesSent += frameByteCount
-                            self.bytesSentTotal += frameByteCount
-                            self.onBytesSent?(frameByteCount)
-                        }
-                    }
-                })
+            self.broadcastFrameData(frameData: frameData, frameByteCount: frameByteCount, sessions: subscribedSessions)
+        }
+    }
+    
+    private func broadcastFrameData(frameData: Data, frameByteCount: Int64, sessions: [ClientSession]) {
+        for session in sessions {
+            // Backpressure check: if previous frame send is still in flight, drop this frame
+            if session.isSending {
+                session.framesDropped += 1
+                self.framesDroppedTotal += 1
+                continue
             }
+            
+            session.isSending = true
+            session.framesSent += 1
+            self.framesSentTotal += 1
+            
+            session.connection.send(content: frameData, completion: .contentProcessed { [weak self, weak session] error in
+                guard let self = self, let session = session else { return }
+                self.queue.async {
+                    session.isSending = false
+                    if let error = error {
+                        NSLog("[OMTSender] Connection send error for %@: %@",
+                              session.remoteEndpoint, error.localizedDescription)
+                        self.removeSession(id: session.id)
+                    } else {
+                        session.bytesSent += frameByteCount
+                        self.bytesSentTotal += frameByteCount
+                        self.onBytesSent?(frameByteCount)
+                    }
+                }
+            })
         }
     }
     

@@ -15,7 +15,7 @@ class OMTVideoCapture: NSObject {
         let height: Int
         let frameRateN: Int32
         let frameRateD: Int32
-        let useFrontCamera: Bool
+        var useFrontCamera: Bool
         
         var fps: Double {
             return Double(frameRateN) / Double(frameRateD)
@@ -30,16 +30,20 @@ class OMTVideoCapture: NSObject {
     
     // MARK: - State
     
-    private var captureSession: AVCaptureSession?
+    /// Exposed for AVCaptureVideoPreviewLayer
+    public private(set) var session: AVCaptureSession?
     private var videoOutput: AVCaptureVideoDataOutput?
-    private var config: Config?
+    private(set) var config: Config?
     private let captureQueue = DispatchQueue(label: "com.antigravity.omt.capture",
                                              qos: .userInteractive)
     private var frameCount: Int64 = 0
     private var lastStatsTime: Date = Date()
     private var _measuredFPS: Double = 0
+    private(set) var actualWidth: Int32 = 0
+    private(set) var actualHeight: Int32 = 0
     
     var measuredFPS: Double { return _measuredFPS }
+    var isRunning: Bool { return session?.isRunning ?? false }
     
     // MARK: - Public API
     
@@ -47,30 +51,94 @@ class OMTVideoCapture: NSObject {
     func startCapture(config: Config) {
         self.config = config
         
-        captureQueue.async { [weak self] in
-            self?.setupCaptureSession(config: config)
+        let authStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        switch authStatus {
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                if granted {
+                    self?.captureQueue.async {
+                        self?.setupCaptureSession(config: config)
+                    }
+                } else {
+                    self?.onError?("Camera access denied by user")
+                }
+            }
+        case .denied, .restricted:
+            onError?("Camera access restricted or denied in iOS Settings")
+        case .authorized:
+            captureQueue.async { [weak self] in
+                self?.setupCaptureSession(config: config)
+            }
+        @unknown default:
+            captureQueue.async { [weak self] in
+                self?.setupCaptureSession(config: config)
+            }
         }
     }
     
     /// Stop camera capture and release resources
     func stopCapture() {
         captureQueue.async { [weak self] in
-            self?.captureSession?.stopRunning()
-            self?.captureSession = nil
+            self?.session?.stopRunning()
+            self?.session = nil
             self?.videoOutput = nil
+            self?._measuredFPS = 0
+            self?.actualWidth = 0
+            self?.actualHeight = 0
+        }
+    }
+    
+    /// Switch between front and back camera dynamically
+    func switchCamera(useFront: Bool) {
+        guard var currentConfig = config else { return }
+        currentConfig.useFrontCamera = useFront
+        self.config = currentConfig
+        
+        captureQueue.async { [weak self] in
+            guard let self = self, let session = self.session else { return }
+            session.beginConfiguration()
+            
+            // Remove existing inputs
+            for input in session.inputs {
+                session.removeInput(input)
+            }
+            
+            // Add new camera device
+            let position: AVCaptureDevice.Position = useFront ? .front : .back
+            if let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position),
+               let input = try? AVCaptureDeviceInput(device: camera) {
+                if session.canAddInput(input) {
+                    session.addInput(input)
+                }
+            }
+            
+            // Update mirroring
+            if let output = self.videoOutput, let connection = output.connection(with: .video) {
+                connection.isVideoMirrored = useFront
+                if currentConfig.width >= currentConfig.height {
+                    connection.videoOrientation = .landscapeRight
+                } else {
+                    connection.videoOrientation = .portrait
+                }
+            }
+            
+            session.commitConfiguration()
+            NSLog("[OMTCapture] Switched camera to %@", useFront ? "front" : "back")
         }
     }
     
     // MARK: - Private
     
     private func setupCaptureSession(config: Config) {
-        let session = AVCaptureSession()
+        let newSession = AVCaptureSession()
+        newSession.beginConfiguration()
         
         // Select camera
         let position: AVCaptureDevice.Position = config.useFrontCamera ? .front : .back
         guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera,
                                                    for: .video,
                                                    position: position) else {
+            newSession.commitConfiguration()
             onError?("No camera available")
             return
         }
@@ -100,12 +168,13 @@ class OMTVideoCapture: NSObject {
         
         // Add camera input
         guard let input = try? AVCaptureDeviceInput(device: camera) else {
+            newSession.commitConfiguration()
             onError?("Cannot create camera input")
             return
         }
         
-        if session.canAddInput(input) {
-            session.addInput(input)
+        if newSession.canAddInput(input) {
+            newSession.addInput(input)
         }
         
         // Configure video output — request standard iOS biplanar YCbCr format (NV12)
@@ -116,14 +185,14 @@ class OMTVideoCapture: NSObject {
         output.alwaysDiscardsLateVideoFrames = true
         output.setSampleBufferDelegate(self, queue: captureQueue)
         
-        if session.canAddOutput(output) {
-            session.addOutput(output)
+        if newSession.canAddOutput(output) {
+            newSession.addOutput(output)
         }
         
         // Set resolution preset
         let preset = selectSessionPreset(width: config.width, height: config.height)
-        if session.canSetSessionPreset(preset) {
-            session.sessionPreset = preset
+        if newSession.canSetSessionPreset(preset) {
+            newSession.sessionPreset = preset
         }
         
         // Set video orientation based on aspect ratio
@@ -139,12 +208,14 @@ class OMTVideoCapture: NSObject {
             }
         }
         
-        self.captureSession = session
+        newSession.commitConfiguration()
+        
+        self.session = newSession
         self.videoOutput = output
         
-        session.startRunning()
-        NSLog("[OMTCapture] Session started %dx%d @ %.2f fps",
-              config.width, config.height, config.fps)
+        newSession.startRunning()
+        NSLog("[OMTCapture] Session started %dx%d @ %.2f fps (preset: %@)",
+              config.width, config.height, config.fps, preset.rawValue)
     }
     
     private func selectSessionPreset(width: Int, height: Int) -> AVCaptureSession.Preset {
@@ -184,6 +255,9 @@ extension OMTVideoCapture: AVCaptureVideoDataOutputSampleBufferDelegate {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         
+        actualWidth = Int32(width)
+        actualHeight = Int32(height)
+        
         guard let yBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0),
               let uvBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1) else {
             return
@@ -200,22 +274,22 @@ extension OMTVideoCapture: AVCaptureVideoDataOutputSampleBufferDelegate {
             let uvPtr = uvBase.assumingMemoryBound(to: UInt8.self)
             
             for y in 0..<height {
-                let yRow = yPtr + (y * yStride)
-                let uvRow = uvPtr + ((y / 2) * uvStride)
-                let outRow = outPtr + (y * width * 2)
+                let yRow = yPtr.advanced(by: y * yStride)
+                let uvRow = uvPtr.advanced(by: (y >> 1) * uvStride)
+                var outRow = outPtr.advanced(by: y * width * 2)
                 
                 var x = 0
-                while x < width - 1 {
+                while x < width {
                     let y0 = yRow[x]
                     let y1 = yRow[x + 1]
                     let u = uvRow[x]
                     let v = uvRow[x + 1]
                     
-                    let outIdx = x * 2
-                    outRow[outIdx]     = u
-                    outRow[outIdx + 1] = y0
-                    outRow[outIdx + 2] = v
-                    outRow[outIdx + 3] = y1
+                    outRow[0] = u
+                    outRow[1] = y0
+                    outRow[2] = v
+                    outRow[3] = y1
+                    outRow = outRow.advanced(by: 4)
                     
                     x += 2
                 }

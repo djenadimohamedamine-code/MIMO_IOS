@@ -148,6 +148,32 @@ class OMTService {
     }
   }
 
+  /// Toggle diagnostic test pattern (SMPTE 75% color bars with motion indicator)
+  Future<bool> setTestPattern(bool enabled) async {
+    try {
+      final result = await _channel.invokeMethod<bool>('setTestPattern', {
+        'enabled': enabled,
+      });
+      return result ?? false;
+    } on PlatformException catch (e) {
+      _errorController.add('setTestPattern error: ${e.message}');
+      return false;
+    }
+  }
+
+  /// Switch between front and back camera dynamically
+  Future<bool> switchCamera({required bool useFrontCamera}) async {
+    try {
+      final result = await _channel.invokeMethod<bool>('switchCamera', {
+        'useFrontCamera': useFrontCamera,
+      });
+      return result ?? false;
+    } on PlatformException catch (e) {
+      _errorController.add('switchCamera error: ${e.message}');
+      return false;
+    }
+  }
+
   // ─── DISCOVERY ────────────────────────────────────────────────────────────
 
   /// Start discovering OMT sources on the local network via DNS-SD (_omt._tcp)

@@ -10,6 +10,7 @@ import AVFoundation
 ///   Flutter  ←→  OMTManager  ←→  OMTSender  ←→  vMix 29 (TCP)
 ///                             ←→  OMTDiscovery  ←→  Bonjour
 ///                             ←→  OMTVideoCapture  ←→  Camera
+///                             ←→  OMTTestPattern  ←→  SMPTE Color Bars
 @available(iOS 13.0, *)
 @objc class OMTManager: NSObject {
     
@@ -37,6 +38,14 @@ import AVFoundation
     private var videoCapture: OMTVideoCapture?
     private let discovery = OMTDiscovery()
     
+    // MARK: - Test Pattern State
+    
+    private var isTestPatternActive: Bool = false
+    private var testPatternTimer: DispatchSourceTimer?
+    private var testPatternFrameIndex: Int64 = 0
+    private let testPatternQueue = DispatchQueue(label: "com.antigravity.omt.testpattern",
+                                                 qos: .userInteractive)
+    
     // MARK: - Flutter event sink
     
     private var eventSink: FlutterEventSink?
@@ -48,6 +57,11 @@ import AVFoundation
     private var bytesSinceLastCalc: Int64 = 0
     private var currentBitrateKbps: Double = 0
     private var statsTimer: Timer?
+    
+    /// Exposed for PlatformView camera preview
+    var activeCaptureSession: AVCaptureSession? {
+        return videoCapture?.session
+    }
     
     // MARK: - Singleton
     
@@ -77,6 +91,12 @@ import AVFoundation
         case "stopSending":
             handleStopSending(result: result)
             
+        case "setTestPattern":
+            handleSetTestPattern(call: call, result: result)
+            
+        case "switchCamera":
+            handleSwitchCamera(call: call, result: result)
+            
         case "startDiscovery":
             handleStartDiscovery(result: result)
             
@@ -87,7 +107,7 @@ import AVFoundation
             handleGetSources(result: result)
             
         case "connectToSource":
-            // Reception — Phase 2
+            // Reception — Lot C
             result(false)
             
         case "disconnect":
@@ -196,8 +216,12 @@ import AVFoundation
         )
         
         let capture = OMTVideoCapture()
-        capture.onFrame = { [weak newSender] pixelData, actualW, actualH in
-            newSender?.sendVideoFrame(pixelData: pixelData)
+        capture.onFrame = { [weak self, weak newSender] pixelData, actualW, actualH in
+            guard let self = self, let sender = newSender else { return }
+            // If test pattern is not active, stream live camera frames with actual dimensions
+            if !self.isTestPatternActive {
+                sender.sendVideoFrame(pixelData: pixelData, width: actualW, height: actualH)
+            }
         }
         capture.onError = { [weak self] errorMsg in
             self?.sendEvent(["type": "error", "message": "Camera: \(errorMsg)"])
@@ -217,6 +241,67 @@ import AVFoundation
         stopAllSending()
         setState(.idle)
         result(nil)
+    }
+    
+    private func handleSetTestPattern(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let enabled = args["enabled"] as? Bool else {
+            result(FlutterError(code: "INVALID_ARGS", message: "Missing enabled parameter", details: nil))
+            return
+        }
+        
+        isTestPatternActive = enabled
+        
+        if enabled {
+            startTestPatternGenerator()
+            NSLog("[OMTManager] Test pattern ENABLED (SMPTE Color Bars)")
+        } else {
+            stopTestPatternGenerator()
+            NSLog("[OMTManager] Test pattern DISABLED (Camera Feed)")
+        }
+        
+        sendStatsUpdate()
+        result(true)
+    }
+    
+    private func startTestPatternGenerator() {
+        stopTestPatternGenerator()
+        
+        let timer = DispatchSource.makeTimerSource(queue: testPatternQueue)
+        // 30 FPS = 33,333 microseconds interval
+        timer.schedule(deadline: .now(), repeating: .milliseconds(33))
+        timer.setEventHandler { [weak self] in
+            guard let self = self, let sender = self.sender, self.isTestPatternActive else { return }
+            self.testPatternFrameIndex += 1
+            
+            let w = sender.currentWidth > 0 ? sender.currentWidth : 1920
+            let h = sender.currentHeight > 0 ? sender.currentHeight : 1080
+            
+            let patternUYVY = OMTTestPattern.generateUYVYFrame(
+                width: Int(w),
+                height: Int(h),
+                frameIndex: self.testPatternFrameIndex
+            )
+            
+            sender.sendVideoFrame(pixelData: patternUYVY, width: w, height: h)
+        }
+        timer.resume()
+        self.testPatternTimer = timer
+    }
+    
+    private func stopTestPatternGenerator() {
+        testPatternTimer?.cancel()
+        testPatternTimer = nil
+    }
+    
+    private func handleSwitchCamera(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any] else {
+            result(FlutterError(code: "INVALID_ARGS", message: "Missing arguments", details: nil))
+            return
+        }
+        let useFront = args["useFrontCamera"] as? Bool ?? false
+        videoCapture?.switchCamera(useFront: useFront)
+        result(true)
     }
     
     private func handleStartDiscovery(result: @escaping FlutterResult) {
@@ -251,6 +336,10 @@ import AVFoundation
         statsTimer?.invalidate()
         statsTimer = nil
         
+        stopTestPatternGenerator()
+        isTestPatternActive = false
+        testPatternFrameIndex = 0
+        
         videoCapture?.stopCapture()
         videoCapture = nil
         
@@ -283,18 +372,28 @@ import AVFoundation
         let subscribed = sender?.subscribedConnectionCount ?? 0
         let framesSent = sender?.framesSentTotal ?? 0
         let framesDropped = sender?.framesDroppedTotal ?? 0
+        let framesEncoded = sender?.encodedFramesTotal ?? 0
         let isVMX = sender?.isUsingVMX1 ?? false
         let codecName = isVMX ? "VMX1 (vMix 29 Native)" : "UYVY (4:2:2 Raw)"
+        let actualW = sender?.currentWidth ?? 1920
+        let actualH = sender?.currentHeight ?? 1080
+        let encoderErr = sender?.encoderLastError ?? "OK"
         
         return [
             "type": "stats",
             "fps": String(format: "%.1f", fps),
+            "actualWidth": actualW,
+            "actualHeight": actualH,
             "bitrateKbps": Int(currentBitrateKbps),
             "framesSent": framesSent,
             "framesDropped": framesDropped,
+            "framesEncoded": framesEncoded,
             "activeConnections": connections,
             "subscribedConnections": subscribed,
             "codec": codecName,
+            "isVMX1": isVMX,
+            "encoderError": encoderErr,
+            "testPatternActive": isTestPatternActive,
             "state": currentState.rawValue
         ]
     }
