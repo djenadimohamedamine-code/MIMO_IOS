@@ -33,6 +33,7 @@ class _OMTScreenState extends State<OMTScreen>
   List<OMTSource> _sources = [];
   bool _isDiscovering = false;
   Timer? _discoveryTimer;
+  OMTSource? _selectedSource;
 
   // Subscriptions
   StreamSubscription<OMTConnectionState>? _stateSub;
@@ -85,9 +86,10 @@ class _OMTScreenState extends State<OMTScreen>
       useFrontCamera: _useFrontCamera,
     );
 
-    // Poll stats every 2 seconds when transmitting
+    // Poll stats every 2 seconds when transmitting or receiving
     _statsTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
-      if (_connectionState == OMTConnectionState.transmitting) {
+      if (_connectionState == OMTConnectionState.transmitting ||
+          _connectionState == OMTConnectionState.receiving) {
         final s = await _omtService.getStats();
         if (mounted) setState(() => _stats = s);
       }
@@ -139,9 +141,42 @@ class _OMTScreenState extends State<OMTScreen>
     await _omtService.switchCamera(useFrontCamera: val);
   }
 
+  Future<void> _connectToSource(OMTSource source) async {
+    setState(() {
+      _selectedSource = source;
+      _connectionState = OMTConnectionState.connecting;
+    });
+    final ok = await _omtService.connectToSource(source);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Impossible de se connecter à ${source.name}'),
+          backgroundColor: Colors.red.shade900,
+        ),
+      );
+      setState(() {
+        _selectedSource = null;
+        _connectionState = OMTConnectionState.idle;
+      });
+    }
+  }
+
+  Future<void> _disconnectReceiver() async {
+    await _omtService.disconnect();
+    if (mounted) {
+      setState(() {
+        _selectedSource = null;
+        _connectionState = OMTConnectionState.idle;
+      });
+    }
+  }
+
   @override
   void dispose() {
     _omtService.stopCameraPreview();
+    if (_selectedSource != null) {
+      _omtService.disconnect();
+    }
     _tabController.dispose();
     _nameController.dispose();
     _stateSub?.cancel();
@@ -741,6 +776,10 @@ class _OMTScreenState extends State<OMTScreen>
   // ─── DISCOVERY TAB ────────────────────────────────────────────────────────
 
   Widget _buildDiscoveryTab() {
+    if (_selectedSource != null) {
+      return _buildReceiverPlayer();
+    }
+
     return Column(
       children: [
         // Toolbar
@@ -807,6 +846,247 @@ class _OMTScreenState extends State<OMTScreen>
     );
   }
 
+  Widget _buildReceiverPlayer() {
+    final source = _selectedSource!;
+    final isReceiving = _connectionState == OMTConnectionState.receiving;
+    final w = _stats['actualWidth'] ?? 0;
+    final h = _stats['actualHeight'] ?? 0;
+    final resStr = (w > 0 && h > 0) ? '${w}x$h' : 'Détection...';
+    final codecStr = _stats['codec']?.toString() ?? 'VMX1';
+    final fpsStr = _stats['fps']?.toString() ?? '0';
+    final bitrate = _stats['bitrateKbps'];
+    final bitrateStr = bitrate != null ? '$bitrate Kbps' : '0 Kbps';
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with back button & status
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                onPressed: _disconnectReceiver,
+                tooltip: 'Retour à la liste',
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      source.name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      '${source.host}:${source.port}',
+                      style: const TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isReceiving
+                      ? Colors.cyanAccent.withOpacity(0.2)
+                      : Colors.orangeAccent.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isReceiving ? Colors.cyanAccent : Colors.orangeAccent,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: isReceiving ? Colors.cyanAccent : Colors.orangeAccent,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      isReceiving ? 'EN DIRECT' : 'CONNEXION...',
+                      style: TextStyle(
+                        color: isReceiving ? Colors.cyanAccent : Colors.orangeAccent,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+
+          // Video player container (16:9)
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              color: Colors.black,
+              child: AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Theme.of(context).platform == TargetPlatform.iOS
+                        ? const UiKitView(
+                            viewType: 'com.antigravity/omt_receiver_view',
+                          )
+                        : const Center(
+                            child: Text(
+                              'Récepteur Vidéo OMT (iOS)',
+                              style: TextStyle(color: Colors.white38),
+                            ),
+                          ),
+
+                    if (!isReceiving)
+                      Container(
+                        color: Colors.black.withOpacity(0.75),
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const CircularProgressIndicator(color: Colors.cyanAccent),
+                              const SizedBox(height: 14),
+                              Text(
+                                'Connexion à ${source.name}...\nNégociation OMTSubscribe',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(color: Colors.white70, fontSize: 13),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                    // Top overlay: resolution & codec badge
+                    Positioned(
+                      top: 10,
+                      left: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.65),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.white24),
+                        ),
+                        child: Text(
+                          '$resStr • $codecStr',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // Live FPS & Bitrate overlay
+                    Positioned(
+                      bottom: 10,
+                      right: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.65),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.cyanAccent.withOpacity(0.4)),
+                        ),
+                        child: Text(
+                          '$fpsStr fps  $bitrateStr',
+                          style: const TextStyle(
+                            color: Colors.cyanAccent,
+                            fontSize: 11,
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // Stop reception button
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: _disconnectReceiver,
+              icon: const Icon(Icons.stop),
+              label: const Text(
+                'Arrêter la réception OMT',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red.shade800,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // Receiver telemetry details
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.cyanAccent.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.cyanAccent.withOpacity(0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.analytics_outlined, color: Colors.cyanAccent, size: 16),
+                    SizedBox(width: 8),
+                    Text(
+                      'Télémétrie du récepteur OMT',
+                      style: TextStyle(
+                        color: Colors.cyanAccent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                _statsRow('Source OMT', source.name),
+                _statsRow('Adresse réseau', '${source.host}:${source.port}'),
+                _statsRow('Codec vidéo', codecStr),
+                _statsRow('Résolution décodée', resStr),
+                _statsRow('Cadence (FPS)', '$fpsStr fps'),
+                _statsRow('Débit binaire reçu', bitrateStr),
+                _statsRow('Trames reçues', '${_stats['framesReceived'] ?? 0}'),
+                _statsRow('Trames décodées', '${_stats['framesDecoded'] ?? 0}'),
+                _statsRow('Trames perdues (drops)', '${_stats['framesDropped'] ?? 0}'),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildEmptyDiscovery() {
     return Center(
       child: Column(
@@ -857,10 +1137,10 @@ class _OMTScreenState extends State<OMTScreen>
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: Colors.greenAccent.withOpacity(0.15),
+            color: Colors.cyanAccent.withOpacity(0.15),
             borderRadius: BorderRadius.circular(10),
           ),
-          child: const Icon(Icons.stream, color: Colors.greenAccent, size: 22),
+          child: const Icon(Icons.stream, color: Colors.cyanAccent, size: 22),
         ),
         title: Text(
           source.name,
@@ -871,7 +1151,17 @@ class _OMTScreenState extends State<OMTScreen>
           '${source.host}:${source.port}',
           style: const TextStyle(color: Colors.white54, fontSize: 12),
         ),
-        trailing: const Icon(Icons.chevron_right, color: Colors.white30),
+        trailing: ElevatedButton.icon(
+          onPressed: () => _connectToSource(source),
+          icon: const Icon(Icons.play_arrow, size: 16),
+          label: const Text('Recevoir', style: TextStyle(fontSize: 12)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.cyan.shade700,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
         onTap: () => _showSourceOptions(source),
       ),
     );
@@ -899,21 +1189,22 @@ class _OMTScreenState extends State<OMTScreen>
                 style: const TextStyle(color: Colors.white54)),
             const SizedBox(height: 20),
             ListTile(
-              leading: const Icon(Icons.download, color: Colors.cyanAccent),
-              title: const Text('Recevoir cette source',
-                  style: TextStyle(color: Colors.white)),
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.cyanAccent.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.play_arrow, color: Colors.cyanAccent),
+              ),
+              title: const Text('Recevoir et afficher le flux en direct',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
               subtitle: const Text(
-                  '(Priorité vMix : transmission iPhone → vMix d\'abord)',
-                  style: TextStyle(color: Colors.white38, fontSize: 11)),
+                  'Connexion TCP directe, décodage VMX1 temps réel',
+                  style: TextStyle(color: Colors.white54, fontSize: 11)),
               onTap: () {
                 Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content:
-                        Text('Réception OMT : prévu en deuxième étape'),
-                    backgroundColor: Colors.blueGrey,
-                  ),
-                );
+                _connectToSource(source);
               },
             ),
           ],

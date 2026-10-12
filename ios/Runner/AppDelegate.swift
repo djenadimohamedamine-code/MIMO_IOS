@@ -87,6 +87,10 @@ import Flutter
             let omtRegistrar = self.registrar(forPlugin: "OMTPlugin")
             let omtCameraFactory = OMTCameraPreviewFactory()
             omtRegistrar?.register(omtCameraFactory, withId: "com.antigravity/omt_camera_preview")
+            
+            // 📺 Inscription du récepteur vidéo natif OMT
+            let omtReceiverFactory = OMTReceiverViewFactory()
+            omtRegistrar?.register(omtReceiverFactory, withId: "com.antigravity/omt_receiver_view")
         }
         // ─────────────────────────────────────────────────────────────────
         

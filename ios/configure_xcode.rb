@@ -36,7 +36,8 @@ begin
   files = [
     'NDIManager.swift', 'NDIView.swift', 'NdiCameraPreview.swift', 'CrashLogger.swift', 'Runner-Bridging-Header.h',
     'OMTProtocol.swift', 'OMTDiscovery.swift', 'OMTVideoCapture.swift', 'OMTSender.swift', 'OMTManager.swift',
-    'OMTVideoEncoder.swift', 'OMTTestPattern.swift', 'OMTCameraPreview.swift', 'OMTVMXBridge.h', 'OMTVMXBridge.mm',
+    'OMTVideoEncoder.swift', 'OMTTestPattern.swift', 'OMTCameraPreview.swift',
+    'OMTReceiver.swift', 'OMTReceiverView.swift', 'OMTVMXBridge.h', 'OMTVMXBridge.mm',
     'libvmx/vmxcodec.h', 'libvmx/vmxcodec.cpp', 'libvmx/vmxcodec_arm.h', 'libvmx/vmxcodec_arm.cpp',
     'libvmx/vmxcodec_common.h', 'libvmx/thread_tasks.h', 'libvmx/sse2neon.h', 'libvmx/framework.h', 'libvmx/pch.h'
   ]

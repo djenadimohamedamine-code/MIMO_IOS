@@ -35,6 +35,7 @@ import AVFoundation
     // MARK: - Components
     
     private var sender: OMTSender?
+    private var receiver: OMTReceiver?
     private var videoCapture: OMTVideoCapture?
     private let discovery = OMTDiscovery()
     
@@ -113,8 +114,7 @@ import AVFoundation
             handleGetSources(result: result)
             
         case "connectToSource":
-            // Reception — Lot C
-            result(false)
+            handleConnectToSource(call: call, result: result)
             
         case "disconnect":
             handleDisconnect(result: result)
@@ -400,10 +400,51 @@ import AVFoundation
         result(dicts)
     }
     
+    private func handleConnectToSource(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let host = args["host"] as? String,
+              let port = args["port"] as? Int else {
+            result(FlutterError(code: "INVALID_ARGS", message: "Host and port required", details: nil))
+            return
+        }
+        let sourceName = args["name"] as? String ?? "\(host):\(port)"
+        
+        setState(.connecting)
+        
+        // Stop any active transmission
+        if sender != nil {
+            handleStopSending { _ in }
+        }
+        
+        receiver?.stop()
+        let newReceiver = OMTReceiver(host: host, port: UInt16(port), sourceName: sourceName)
+        newReceiver.onStateChanged = { [weak self] state in
+            self?.setState(state)
+        }
+        newReceiver.onError = { [weak self] err in
+            self?.sendEvent(["type": "error", "message": "OMT Réception: \(err)"])
+        }
+        newReceiver.onStatsUpdated = { [weak self] stats in
+            var fullStats = stats
+            fullStats["type"] = "stats"
+            self?.sendEvent(fullStats)
+        }
+        self.receiver = newReceiver
+        newReceiver.start()
+        result(true)
+    }
+    
     private func handleDisconnect(result: @escaping FlutterResult) {
+        if let rec = receiver {
+            rec.stop()
+            receiver = nil
+            setState(.idle)
+            result(true)
+            return
+        }
         stopAllSending()
         setState(.idle)
-        result(nil)
+        result(true)
     }
     
     // MARK: - Helpers
@@ -443,6 +484,12 @@ import AVFoundation
     }
     
     private func buildStatsDict() -> [String: Any] {
+        if let rec = receiver {
+            var stats = rec.getStatsDict()
+            stats["type"] = "stats"
+            return stats
+        }
+        
         let fps = videoCapture?.measuredFPS ?? 0
         let connections = sender?.activeConnectionCount ?? 0
         let subscribed = sender?.subscribedConnectionCount ?? 0
@@ -490,7 +537,7 @@ import AVFoundation
         statsTimer?.invalidate()
         statsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            if self.currentState == .transmitting || self.currentState == .listening || self.currentState == .connected {
+            if self.currentState == .transmitting || self.currentState == .listening || self.currentState == .connected || self.currentState == .receiving {
                 self.sendEvent(self.buildStatsDict())
             }
         }
