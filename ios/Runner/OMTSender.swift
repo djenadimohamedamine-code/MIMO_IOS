@@ -561,7 +561,7 @@ class NetServicePublisher: NSObject, NetServiceDelegate {
             txtDict["ip"] = ipData
             NSLog("[NetServicePublisher] Advertising local IPv4 in TXT record: %@", localIP)
         }
-        service.setTXTRecordData(NetService.data(fromTXTRecord: txtDict))
+        service.setTXTRecord(NetService.data(fromTXTRecord: txtDict))
         
         service.schedule(in: .main, forMode: .common)
         service.publish()
