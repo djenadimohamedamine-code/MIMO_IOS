@@ -20,7 +20,10 @@ class OMTReceiver {
     private var connection: NWConnection?
     private let receiveQueue = DispatchQueue(label: "com.antigravity.omt.receiver", qos: .userInteractive)
     private let decodeQueue = DispatchQueue(label: "com.antigravity.omt.receiver.decode", qos: .userInteractive)
-    
+    // Limit outstanding decode work to one frame to protect RAM and latency.
+    private let decodeGate = NSLock()
+    private var decodePending = false
+
     // VMX Decoder
     private var vmxBridge: OMTVMXBridge?
     private var currentWidth: Int32 = 0
@@ -131,11 +134,15 @@ class OMTReceiver {
         connection?.cancel()
         connection = nil
         
-        vmxBridge?.destroy()
-        vmxBridge = nil
-        currentWidth = 0
-        currentHeight = 0
-        
+        // The decoder may still be processing its last frame. Destroy it on
+        // its own serial queue rather than racing VMX_DecodeBGRA on another thread.
+        decodeQueue.async { [weak self] in
+            self?.vmxBridge?.destroy()
+            self?.vmxBridge = nil
+            self?.currentWidth = 0
+            self?.currentHeight = 0
+        }
+
         receiveBuffer.removeAll(keepingCapacity: false)
         NSLog("[OMTReceiver] Stopped receiver for %@", sourceName)
     }
@@ -204,34 +211,43 @@ class OMTReceiver {
         // [10..11]: MetadataLength (UInt16 LE)
         // [12..15]: DataLength (Int32 LE)
         while receiveBuffer.count >= 16 {
-            let frameType = receiveBuffer[1]
-            
-            let dataLen: Int32 = receiveBuffer.withUnsafeBytes { ptr in
-                ptr.load(fromByteOffset: 12, as: Int32.self).littleEndian
-            }
-            
-            // Sanity check dataLen (protect against corrupt stream / desync)
-            guard dataLen >= 0 && dataLen <= 60_000_000 else {
-                NSLog("[OMTReceiver] Stream desync detected: invalid dataLen %d, skipping 1 byte", dataLen)
-                receiveBuffer.remove(at: 0)
+            // Reject corrupt headers rather than trusting random lengths or
+            // performing a potentially unaligned Int32 pointer load on ARM64.
+            guard receiveBuffer[0] == 1 else {
+                receiveBuffer.removeFirst()
                 continue
             }
-            
+            let frameType = receiveBuffer[1]
+            let dataLen = receiveBuffer.readLEInt32(offset: 12)
+            let metadataLen = Int(receiveBuffer.readLEUInt16(offset: 10))
+
+            guard dataLen >= 0, dataLen <= 60_000_000,
+                  metadataLen <= Int(dataLen) else {
+                NSLog("[OMTReceiver] Invalid OMT header, resynchronizing TCP stream")
+                receiveBuffer.removeFirst()
+                continue
+            }
+
             let totalFrameLength = 16 + Int(dataLen)
             if receiveBuffer.count < totalFrameLength {
-                // Incomplete frame, wait for more data from TCP
                 break
             }
-            
-            // Extract complete payload and slice buffer
-            let payload = receiveBuffer.subdata(in: 16..<totalFrameLength)
-            receiveBuffer.removeSubrange(0..<totalFrameLength)
-            
+
+            // DataLength includes optional per-frame XML metadata at the end.
+            // Do not pass those XML bytes to the VMX decoder.
             if frameType == OMTFrameType.video.rawValue {
-                handleVideoPayload(payload)
+                let videoEnd = totalFrameLength - metadataLen
+                if videoEnd >= 16 + 32 {
+                    let payload = receiveBuffer.subdata(in: 16..<videoEnd)
+                    handleVideoPayload(payload)
+                } else {
+                    framesDropped += 1
+                }
             } else if frameType == OMTFrameType.metadata.rawValue {
+                let payload = receiveBuffer.subdata(in: 16..<totalFrameLength)
                 handleMetadataPayload(payload)
             }
+            receiveBuffer.removeSubrange(0..<totalFrameLength)
         }
         
         updateStatsIfNeeded()
@@ -256,9 +272,9 @@ class OMTReceiver {
             return
         }
         
-        let codec: Int32 = payload.withUnsafeBytes { $0.load(fromByteOffset: 0, as: Int32.self).littleEndian }
-        let width: Int32 = payload.withUnsafeBytes { $0.load(fromByteOffset: 4, as: Int32.self).littleEndian }
-        let height: Int32 = payload.withUnsafeBytes { $0.load(fromByteOffset: 8, as: Int32.self).littleEndian }
+        let codec = payload.readLEInt32(offset: 0)
+        let width = payload.readLEInt32(offset: 4)
+        let height = payload.readLEInt32(offset: 8)
         
         guard width > 0 && width <= 4096 && height > 0 && height <= 4096 else {
             framesDropped += 1
@@ -274,10 +290,26 @@ class OMTReceiver {
             return
         }
         
-        // Dispatch frame decoding to concurrent decode queue
+        // Do not queue unlimited full-resolution frames when VMX decoding
+        // cannot keep up with the incoming TCP stream.
+        decodeGate.lock()
+        guard !decodePending else {
+            decodeGate.unlock()
+            framesDropped += 1
+            return
+        }
+        decodePending = true
+        decodeGate.unlock()
+
         decodeQueue.async { [weak self] in
-            guard let self = self, self.isRunning else { return }
-            
+            guard let self = self else { return }
+            defer {
+                self.decodeGate.lock()
+                self.decodePending = false
+                self.decodeGate.unlock()
+            }
+            guard self.isRunning else { return }
+
             if codec == OMTVideoCodec.vmx1 {
                 self.codecName = "VMX1"
                 self.decodeVMX1Frame(videoData: videoData, width: width, height: height)
