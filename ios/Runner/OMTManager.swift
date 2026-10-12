@@ -160,9 +160,13 @@ import AVFoundation
         let frameRateD = Int32(args["frameRateD"] as? Int ?? 1001)
         let useFrontCamera = args["useFrontCamera"] as? Bool ?? false
         
-        // Stop any existing sending
-        stopAllSending()
-        
+        // Preserve an existing (or still starting) preview capture session.
+        // Only stop the sender pipeline: destroying the camera here makes the
+        // preview briefly go black and can race with its asynchronous startup.
+        stopSendingPipelineKeepingCamera()
+        receiver?.stop()
+        receiver = nil
+
         setState(.listening)
         
         // Create and start sender (TCP server waiting for receiver connections)
@@ -214,7 +218,7 @@ import AVFoundation
         self.sender = newSender
         
         // Start camera capture (or reuse running preview capture)
-        if let existingCapture = self.videoCapture, existingCapture.isRunning {
+        if let existingCapture = self.videoCapture {
             existingCapture.onFrame = { [weak self, weak newSender] pixelData, actualW, actualH in
                 guard let self = self, let sender = newSender else { return }
                 if !self.isTestPatternActive {
@@ -255,16 +259,7 @@ import AVFoundation
     
     private func handleStopSending(result: @escaping FlutterResult) {
         setState(.disconnecting)
-        // Stop sender network pipeline, keep camera preview running smoothly
-        statsTimer?.invalidate()
-        statsTimer = nil
-        stopTestPatternGenerator()
-        isTestPatternActive = false
-        testPatternFrameIndex = 0
-        sender?.stop()
-        sender = nil
-        bytesSinceLastCalc = 0
-        currentBitrateKbps = 0
+        stopSendingPipelineKeepingCamera()
         setState(.idle)
         result(nil)
     }
@@ -450,22 +445,25 @@ import AVFoundation
     
     // MARK: - Helpers
     
-    private func stopAllSending() {
+    /// Stop the network sender while retaining the camera for the local preview.
+    private func stopSendingPipelineKeepingCamera() {
         statsTimer?.invalidate()
         statsTimer = nil
-        
         stopTestPatternGenerator()
         isTestPatternActive = false
         testPatternFrameIndex = 0
-        
-        videoCapture?.stopCapture()
-        videoCapture = nil
-        
+
         sender?.stop()
         sender = nil
-        
         bytesSinceLastCalc = 0
         currentBitrateKbps = 0
+    }
+
+    /// Full teardown is reserved for switching to reception or disconnecting.
+    private func stopAllSending() {
+        stopSendingPipelineKeepingCamera()
+        videoCapture?.stopCapture()
+        videoCapture = nil
     }
     
     private func setState(_ newState: State) {

@@ -71,6 +71,10 @@ class OMTSender {
     private var sessions: [ObjectIdentifier: ClientSession] = [:]
     private let queue = DispatchQueue(label: "com.antigravity.omt.sender",
                                       qos: .userInteractive)
+    // Camera callbacks may outpace VMX1 encoding. Keep no more than one frame
+    // queued for encoding instead of accumulating full-resolution Data buffers.
+    private let frameGate = NSLock()
+    private var framePending = false
     private var netServicePublisher: NetServicePublisher?
     private var videoEncoder: OMTVideoEncoder?
     
@@ -156,30 +160,47 @@ class OMTSender {
     
     /// Stop the listener and all client connections
     func stop() {
-        listener?.cancel()
-        listener = nil
-        
-        for (_, session) in sessions {
-            session.connection.cancel()
+        // Serialize teardown with encode/send work so the VMX instance cannot
+        // be destroyed while a queued video frame is using it.
+        queue.sync {
+            listener?.cancel()
+            listener = nil
+
+            for (_, session) in sessions {
+                session.connection.cancel()
+            }
+            sessions.removeAll()
+
+            netServicePublisher?.stop()
+            netServicePublisher = nil
+
+            videoEncoder?.destroy()
+            videoEncoder = nil
+
+            updateState(.idle)
+            NSLog("[OMTSender] Stopped")
         }
-        sessions.removeAll()
-        
-        netServicePublisher?.stop()
-        netServicePublisher = nil
-        
-        videoEncoder?.destroy()
-        videoEncoder = nil
-        
-        updateState(.idle)
-        NSLog("[OMTSender] Stopped")
     }
     
     /// Send a video frame to all subscribed receivers (vMix 29).
     /// Does NOT send to connections that have not subscribed yet.
     func sendVideoFrame(pixelData: Data, width: Int32? = nil, height: Int32? = nil) {
+        frameGate.lock()
+        guard !framePending else {
+            frameGate.unlock()
+            return
+        }
+        framePending = true
+        frameGate.unlock()
+
         queue.async { [weak self] in
             guard let self = self else { return }
-            
+            defer {
+                self.frameGate.lock()
+                self.framePending = false
+                self.frameGate.unlock()
+            }
+
             let subscribedSessions = self.sessions.values.filter { $0.isSubscribedToVideo }
             guard !subscribedSessions.isEmpty else {
                 // No client is subscribed to video yet — do not burn CPU encoding
