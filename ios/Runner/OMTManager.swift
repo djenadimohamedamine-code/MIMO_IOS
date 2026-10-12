@@ -24,6 +24,7 @@ import AVFoundation
     enum State: String {
         case idle = "idle"
         case discovering = "discovering"
+        case connecting = "connecting"    // Receiver initiating a TCP connection
         case listening = "listening"        // Port open, published via Bonjour, 0 clients
         case connected = "connected"        // vMix 29 connected, waiting for subscription
         case transmitting = "transmitting"  // vMix 29 subscribed and actively streaming

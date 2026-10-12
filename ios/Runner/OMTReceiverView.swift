@@ -63,7 +63,10 @@ class OMTReceiverDisplayUIView: UIView {
     
     @objc private func onFrameDecoded(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
-              let cgImage = userInfo["image"] as? CGImage else { return }
+              let imageObject = userInfo["image"] else { return }
+        // OMTReceiver posts CGImage instances under the "image" key.
+        // An optional downcast to a CoreFoundation type is rejected by Swift.
+        let cgImage = imageObject as! CGImage
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }

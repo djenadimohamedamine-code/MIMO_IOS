@@ -1,7 +1,7 @@
 name: MIMO_NDI_BUILD
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "gpt6-omt-fixes-20261013" ]
   workflow_dispatch:
 
 jobs:
