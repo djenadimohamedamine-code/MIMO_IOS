@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import UIKit
+import Darwin
 
 /// Manages TCP connections to OMT receivers (e.g., vMix 29).
 /// Implements full OMT 1.0 protocol specification:
@@ -51,7 +52,7 @@ class OMTSender {
     // MARK: - Configuration
     
     let sourceName: String
-    let port: NWEndpoint.Port
+    private(set) var port: NWEndpoint.Port
     private(set) var currentWidth: Int32
     private(set) var currentHeight: Int32
     let frameRateN: Int32
@@ -102,7 +103,7 @@ class OMTSender {
     // MARK: - Init
     
     init(sourceName: String,
-         port: Int = 7788,
+         port: Int = 6400,
          width: Int32,
          height: Int32,
          frameRateN: Int32,
@@ -127,31 +128,47 @@ class OMTSender {
     
     /// Start the TCP listener and advertise via Bonjour
     func start() {
-        do {
-            let params = NWParameters.tcp
-            params.allowLocalEndpointReuse = true
-            
-            let listener = try NWListener(using: params, on: port)
-            self.listener = listener
-            
-            listener.stateUpdateHandler = { [weak self] newState in
-                self?.handleListenerState(newState)
+        let startPort = port.rawValue
+        let maxPort = max(startPort, startPort + 10)
+        var boundListener: NWListener?
+        var boundPort: NWEndpoint.Port = port
+        
+        for tryPortNum in startPort...maxPort {
+            do {
+                let params = NWParameters.tcp
+                params.allowLocalEndpointReuse = true
+                guard let candidatePort = NWEndpoint.Port(rawValue: tryPortNum) else { continue }
+                let l = try NWListener(using: params, on: candidatePort)
+                boundListener = l
+                boundPort = candidatePort
+                break
+            } catch {
+                NSLog("[OMTSender] Port %d unavailable, trying next...", tryPortNum)
             }
-            
-            listener.newConnectionHandler = { [weak self] connection in
-                self?.queue.async {
-                    self?.handleNewConnection(connection)
-                }
-            }
-            
-            listener.start(queue: queue)
-            NSLog("[OMTSender] Listener starting on port %d", port.rawValue)
-            
-        } catch {
-            NSLog("[OMTSender] Failed to create listener: %@", error.localizedDescription)
-            updateState(.error)
-            onError?("Failed to start OMT sender: \(error.localizedDescription)")
         }
+        
+        guard let listener = boundListener else {
+            NSLog("[OMTSender] Failed to create listener on ports %d-%d", startPort, maxPort)
+            updateState(.error)
+            onError?("Failed to bind OMT sender port in range \(startPort)-\(maxPort)")
+            return
+        }
+        
+        self.port = boundPort
+        self.listener = listener
+        
+        listener.stateUpdateHandler = { [weak self] newState in
+            self?.handleListenerState(newState)
+        }
+        
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.queue.async {
+                self?.handleNewConnection(connection)
+            }
+        }
+        
+        listener.start(queue: queue)
+        NSLog("[OMTSender] Listener starting on port %d", boundPort.rawValue)
     }
     
     /// Stop the listener and all client connections
@@ -164,8 +181,10 @@ class OMTSender {
         }
         sessions.removeAll()
         
-        netServicePublisher?.stop()
-        netServicePublisher = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.netServicePublisher?.stop()
+            self?.netServicePublisher = nil
+        }
         
         videoEncoder?.destroy()
         videoEncoder = nil
@@ -464,16 +483,19 @@ class OMTSender {
     // MARK: - Bonjour Advertisement
     
     private func startBonjourAdvertisement() {
-        // vMix 29 OMT discovery naming convention: "DeviceName (SourceName)"
-        let deviceName = UIDevice.current.name
-        let advertisedName = "\(deviceName) (\(sourceName))"
-        
-        netServicePublisher = NetServicePublisher(
-            name: advertisedName,
-            port: Int32(port.rawValue)
-        )
-        netServicePublisher?.start()
-        NSLog("[OMTSender] Bonjour advertisement registered for '%@'", advertisedName)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            // vMix 29 OMT discovery naming convention: "DeviceName (SourceName)"
+            let deviceName = UIDevice.current.name
+            let advertisedName = "\(deviceName) (\(self.sourceName))"
+            
+            self.netServicePublisher = NetServicePublisher(
+                name: advertisedName,
+                port: Int32(self.port.rawValue)
+            )
+            self.netServicePublisher?.start()
+            NSLog("[OMTSender] Bonjour advertisement registered for '%@' on port %d", advertisedName, self.port.rawValue)
+        }
     }
 }
 
@@ -528,12 +550,27 @@ class NetServicePublisher: NSObject, NetServiceDelegate {
                                  name: name,
                                  port: port)
         service.delegate = self
+        
+        // Build standard OMT TXT records with local IPv4
+        var txtDict: [String: Data] = [
+            "txtvers": "1".data(using: .utf8)!,
+            "proto": "omt".data(using: .utf8)!
+        ]
+        if let localIP = NetServicePublisher.getLocalIPv4Address(),
+           let ipData = localIP.data(using: .utf8) {
+            txtDict["ip"] = ipData
+            NSLog("[NetServicePublisher] Advertising local IPv4 in TXT record: %@", localIP)
+        }
+        service.setTXTRecordData(NetService.data(fromTXTRecord: txtDict))
+        
+        service.schedule(in: .main, forMode: .common)
         service.publish()
         self.service = service
     }
     
     func stop() {
         service?.stop()
+        service?.delegate = nil
         service = nil
     }
     
@@ -543,5 +580,34 @@ class NetServicePublisher: NSObject, NetServiceDelegate {
     
     func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
         NSLog("[Bonjour] OMT service failed to publish: %@", errorDict.description)
+    }
+    
+    /// Helper to query POSIX interfaces and retrieve local IPv4 address (en0 / Wi-Fi)
+    static func getLocalIPv4Address() -> String? {
+        var address: String?
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return nil }
+        defer { freeifaddrs(ifaddr) }
+        
+        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
+            let interface = ptr.pointee
+            guard let sa = interface.ifa_addr else { continue }
+            if sa.pointee.sa_family == UInt8(AF_INET) {
+                let name = String(cString: interface.ifa_name)
+                let saIn = sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+                var addr = saIn.sin_addr
+                var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                if let cStr = inet_ntop(AF_INET, &addr, &buffer, socklen_t(INET_ADDRSTRLEN)) {
+                    let ip = String(cString: cStr)
+                    if !ip.isEmpty && !ip.hasPrefix("127.") {
+                        address = ip
+                        if name == "en0" { // Wi-Fi is primary on iOS
+                            break
+                        }
+                    }
+                }
+            }
+        }
+        return address
     }
 }

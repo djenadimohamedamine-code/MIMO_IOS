@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Darwin
 
 /// Manages DNS-SD Bonjour discovery of OMT sources on the local network.
 /// Service type: _omt._tcp (as defined in the OMT protocol)
@@ -17,6 +18,7 @@ class OMTDiscovery: NSObject {
     
     private var browser: NWBrowser?
     private var discoveredSources: [String: OMTDiscoveredSource] = [:]
+    private var activeResolvers: [String: BonjourServiceResolver] = [:]
     private let queue = DispatchQueue(label: "com.antigravity.omt.discovery",
                                      qos: .userInitiated)
     private var isRunning = false
@@ -64,6 +66,10 @@ class OMTDiscovery: NSObject {
         isRunning = false
         browser?.cancel()
         browser = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.activeResolvers.values.forEach { $0.cancel() }
+            self?.activeResolvers.removeAll()
+        }
         NSLog("[OMTDiscovery] Stopped")
     }
     
@@ -82,17 +88,23 @@ class OMTDiscovery: NSObject {
                 continue
             }
             
-            // Resolve the endpoint to get host and port
+            // Check if already resolved with valid IPv4
+            if let existing = discoveredSources[name], existing.isResolved, !existing.host.isEmpty {
+                updated[name] = existing
+                continue
+            }
+            
+            // Initial placeholder
             let source = OMTDiscoveredSource(
                 name: name,
                 serviceName: "\(name).\(type)\(domain)",
-                host: "",   // Will be populated on resolve
-                port: 7788, // Default OMT port
+                host: "",
+                port: 6400, // Standard OMT port
                 isResolved: false
             )
             updated[name] = source
             
-            // Resolve the service to get actual host/port
+            // Resolve service to extract real IPv4
             resolveService(name: name, type: type, domain: domain) { [weak self] host, port in
                 guard let self = self else { return }
                 let resolved = OMTDiscoveredSource(
@@ -100,7 +112,7 @@ class OMTDiscovery: NSObject {
                     serviceName: "\(name).\(type)\(domain)",
                     host: host,
                     port: port,
-                    isResolved: true
+                    isResolved: !host.isEmpty
                 )
                 self.queue.async {
                     self.discoveredSources[name] = resolved
@@ -114,8 +126,14 @@ class OMTDiscovery: NSObject {
         for key in removedKeys {
             discoveredSources.removeValue(forKey: key)
         }
+        DispatchQueue.main.async { [weak self] in
+            for key in removedKeys {
+                self?.activeResolvers[key]?.cancel()
+                self?.activeResolvers.removeValue(forKey: key)
+            }
+        }
         
-        // Add newly found (unresolved) sources while awaiting resolution
+        // Add newly found sources while awaiting resolution
         for (key, source) in updated {
             if discoveredSources[key] == nil {
                 discoveredSources[key] = source
@@ -127,49 +145,17 @@ class OMTDiscovery: NSObject {
     
     private func resolveService(name: String, type: String, domain: String,
                                 completion: @escaping (String, Int) -> Void) {
-        // Use NWConnection to resolve the Bonjour service
-        let endpoint = NWEndpoint.service(name: name, type: type, domain: domain, interface: nil)
-        let connection = NWConnection(to: endpoint, using: .tcp)
-        
-        connection.stateUpdateHandler = { state in
-            switch state {
-            case .preparing:
-                break
-            case .ready:
-                // Extract host and port from the connection
-                if let path = connection.currentPath,
-                   case .hostPort(let host, let port) = path.remoteEndpoint {
-                    let hostStr: String
-                    switch host {
-                    case .name(let n, _):
-                        hostStr = n
-                    case .ipv4(let addr):
-                        hostStr = "\(addr)"
-                    case .ipv6(let addr):
-                        hostStr = "\(addr)"
-                    @unknown default:
-                        hostStr = ""
-                    }
-                    let portInt = Int(port.rawValue)
-                    connection.cancel()
-                    completion(hostStr, portInt)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.activeResolvers[name]?.cancel()
+            let resolver = BonjourServiceResolver(name: name, type: type, domain: domain) { [weak self] host, port in
+                DispatchQueue.main.async {
+                    self?.activeResolvers.removeValue(forKey: name)
                 }
-            case .failed:
-                connection.cancel()
-                // Use default port if resolution fails
-                completion("", 7788)
-            default:
-                break
+                completion(host, port)
             }
-        }
-        
-        connection.start(queue: queue)
-        
-        // Timeout after 3 seconds
-        queue.asyncAfter(deadline: .now() + 3) {
-            if connection.state != .ready && connection.state != .cancelled {
-                connection.cancel()
-            }
+            self.activeResolvers[name] = resolver
+            resolver.start()
         }
     }
     
@@ -178,6 +164,114 @@ class OMTDiscovery: NSObject {
         DispatchQueue.main.async { [weak self] in
             self?.onSourcesChanged?(sources)
         }
+    }
+}
+
+// MARK: - BonjourServiceResolver
+
+/// Resolves a Bonjour NetService and extracts the IPv4 address (AF_INET),
+/// explicitly bypassing IPv6 link-local addresses (fe80::) which are rejected by OMT/vMix.
+class BonjourServiceResolver: NSObject, NetServiceDelegate {
+    private var netService: NetService?
+    private let completion: (String, Int) -> Void
+    private var isCompleted = false
+    private var timeoutTimer: Timer?
+    
+    init(name: String, type: String, domain: String, completion: @escaping (String, Int) -> Void) {
+        self.completion = completion
+        super.init()
+        
+        let service = NetService(domain: domain, type: type, name: name)
+        service.delegate = self
+        self.netService = service
+    }
+    
+    func start() {
+        guard let service = netService else { return }
+        service.schedule(in: .main, forMode: .common)
+        service.resolve(withTimeout: 4.0)
+        
+        timeoutTimer = Timer.scheduledTimer(withTimeInterval: 4.5, repeats: false) { [weak self] _ in
+            self?.finish(host: "", port: 6400)
+        }
+    }
+    
+    func cancel() {
+        timeoutTimer?.invalidate()
+        timeoutTimer = nil
+        netService?.stop()
+        netService?.delegate = nil
+        netService = nil
+    }
+    
+    func netServiceDidResolveAddress(_ sender: NetService) {
+        guard !isCompleted else { return }
+        
+        var resolvedIPv4: String?
+        var resolvedPort: Int = sender.port > 0 ? sender.port : 6400
+        
+        if let addresses = sender.addresses {
+            for addressData in addresses {
+                addressData.withUnsafeBytes { rawBufferPointer in
+                    guard let base = rawBufferPointer.baseAddress else { return }
+                    let socketAddress = base.assumingMemoryBound(to: sockaddr.self)
+                    if socketAddress.pointee.sa_family == sa_family_t(AF_INET) {
+                        let socketAddressIn = base.assumingMemoryBound(to: sockaddr_in.self)
+                        var addr = socketAddressIn.pointee.sin_addr
+                        var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                        if let cStr = inet_ntop(AF_INET, &addr, &buffer, socklen_t(INET_ADDRSTRLEN)) {
+                            let ipStr = String(cString: cStr)
+                            if !ipStr.isEmpty && !ipStr.hasPrefix("127.") {
+                                resolvedIPv4 = ipStr
+                                let portIn = UInt16(bigEndian: socketAddressIn.pointee.sin_port)
+                                if portIn > 0 {
+                                    resolvedPort = Int(portIn)
+                                }
+                            }
+                        }
+                    }
+                }
+                if resolvedIPv4 != nil {
+                    break
+                }
+            }
+        }
+        
+        // Also check TXT record if available to see if an IP was published
+        if resolvedIPv4 == nil, let txtData = sender.txtRecordData() {
+            let dict = NetService.dictionary(fromTXTRecord: txtData)
+            if let ipData = dict["ip"], let ipStr = String(data: ipData, encoding: .utf8), !ipStr.isEmpty {
+                resolvedIPv4 = ipStr
+            }
+        }
+        
+        let finalHost: String
+        if let ip = resolvedIPv4, !ip.isEmpty {
+            finalHost = ip
+        } else if let hostName = sender.hostName, !hostName.isEmpty {
+            finalHost = hostName.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        } else {
+            finalHost = ""
+        }
+        
+        NSLog("[OMTDiscovery] Bonjour '%@' resolved to IPv4 %@:%d", sender.name, finalHost, resolvedPort)
+        finish(host: finalHost, port: resolvedPort)
+    }
+    
+    func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
+        NSLog("[OMTDiscovery] Bonjour '%@' didNotResolve: %@", sender.name, errorDict.description)
+        finish(host: "", port: 6400)
+    }
+    
+    private func finish(host: String, port: Int) {
+        guard !isCompleted else { return }
+        isCompleted = true
+        timeoutTimer?.invalidate()
+        timeoutTimer = nil
+        netService?.stop()
+        netService?.delegate = nil
+        netService = nil
+        completion(host, port)
     }
 }
 
@@ -199,3 +293,4 @@ struct OMTDiscoveredSource {
         ]
     }
 }
+

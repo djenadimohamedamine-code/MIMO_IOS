@@ -61,7 +61,7 @@ class OMTHeaderSize {
 /// OMT DNS-SD Service Type
 const String kOMTServiceType = '_omt._tcp';
 const String kOMTServiceDomain = 'local';
-const int kOMTDefaultPort = 7788;
+const int kOMTDefaultPort = 6400;
 
 /// OMT Protocol Version
 const int kOMTProtocolVersion = 1;

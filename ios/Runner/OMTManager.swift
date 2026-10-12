@@ -166,9 +166,10 @@ import AVFoundation
         setState(.listening)
         
         // Create and start sender (TCP server waiting for receiver connections)
+        let requestedPort = args["port"] as? Int ?? 6400
         let newSender = OMTSender(
             sourceName: sourceName,
-            port: 7788,
+            port: requestedPort,
             width: width,
             height: height,
             frameRateN: frameRateN,
@@ -503,7 +504,7 @@ import AVFoundation
         let actualH = sender?.currentHeight ?? 1080
         let encoderErr = sender?.encoderLastError ?? "OK"
         
-        return [
+        var dict: [String: Any] = [
             "type": "stats",
             "fps": String(format: "%.1f", fps),
             "actualWidth": actualW,
@@ -518,8 +519,13 @@ import AVFoundation
             "isVMX1": isVMX,
             "encoderError": encoderErr,
             "testPatternActive": isTestPatternActive,
-            "state": currentState.rawValue
+            "state": currentState.rawValue,
+            "port": Int(sender?.port.rawValue ?? 6400)
         ]
+        if let ip = NetServicePublisher.getLocalIPv4Address() {
+            dict["localIP"] = ip
+        }
+        return dict
     }
     
     private func updateBitrateStats(bytes: Int64) {

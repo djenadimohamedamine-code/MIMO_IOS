@@ -83,7 +83,14 @@ class OMTReceiver {
             return
         }
         
-        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: nwPort)
+        let cleanHost = host.components(separatedBy: "%").first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? host
+        guard !cleanHost.isEmpty else {
+            onError?("Hôte non valide ou vide: \(host)")
+            onStateChanged?(.error)
+            return
+        }
+        
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(cleanHost), port: nwPort)
         let tcpOptions = NWProtocolTCP.Options()
         tcpOptions.noDelay = true // Disable Nagle's algorithm for low-latency broadcast
         
@@ -457,6 +464,8 @@ class OMTReceiver {
         return [
             "isReceiver": true,
             "sourceName": sourceName,
+            "host": host,
+            "port": Int(port),
             "actualWidth": actualWidth,
             "actualHeight": actualHeight,
             "codec": codecName,

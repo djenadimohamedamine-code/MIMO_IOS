@@ -241,7 +241,7 @@ class _OMTScreenState extends State<OMTScreen>
         break;
       case OMTConnectionState.listening:
         stateColor = Colors.amber;
-        stateLabel = 'En écoute — En attente de vMix 29 (Port 7788)';
+        stateLabel = 'En écoute — En attente de vMix 29 (Port 6400)';
         stateIcon = Icons.wifi_tethering;
         break;
       case OMTConnectionState.connected:
@@ -686,7 +686,7 @@ class _OMTScreenState extends State<OMTScreen>
             '2. Appuyez sur "Démarrer la transmission OMT"\n'
             '3. Dans vMix → Add Input → OMT\n'
             '4. Sélectionnez votre iPhone (annoncé automatiquement via Bonjour)\n'
-            '5. La source communique via TCP sur le port 7788 en codec VMX1 natif',
+            '5. La source communique via TCP sur le port 6400 en codec VMX1 natif',
             style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.5),
           ),
         ],
@@ -737,6 +737,8 @@ class _OMTScreenState extends State<OMTScreen>
             ],
           ),
           const SizedBox(height: 10),
+          if (_stats['localIP'] != null)
+            _statsRow('IP locale & Port', '${_stats['localIP']}:${_stats['port'] ?? 6400}'),
           _statsRow('Résolution réelle', '${w}x$h'),
           _statsRow('Format / Codec', '${_stats['codec'] ?? 'VMX1 (vMix 29 Native)'}'),
           _statsRow('Moteur VMX1 (NEON)', isVmxActive ? 'ACTIF (Compressé)' : 'INACTIF (Fallback)'),
