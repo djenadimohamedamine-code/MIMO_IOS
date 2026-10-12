@@ -28,24 +28,16 @@ begin
 
   # 2. Add Swift files to the project
   group = project.main_group.find_subpath('Runner', true)
-  files = ['NDIManager.swift', 'NDIView.swift', 'NdiCameraPreview.swift', 'CrashLogger.swift', 'Runner-Bridging-Header.h']
+  files = [
+    'NDIManager.swift', 'NDIView.swift', 'NdiCameraPreview.swift', 'CrashLogger.swift', 'Runner-Bridging-Header.h',
+    'OMTProtocol.swift', 'OMTDiscovery.swift', 'OMTVideoCapture.swift', 'OMTSender.swift', 'OMTManager.swift'
+  ]
 
   files.each do |f|
     file_ref = group.find_file_by_path(f)
     if file_ref.nil?
       file_ref = group.new_file(f)
       target.source_build_phase.add_file_reference(file_ref) unless f.end_with?('.h')
-    end
-  end
-
-  # 2b. Add OMT Swift files to the project
-  omt_group = group.find_subpath('OMT', true)
-  omt_files = ['OMTProtocol.swift', 'OMTDiscovery.swift', 'OMTVideoCapture.swift', 'OMTSender.swift', 'OMTManager.swift']
-  omt_files.each do |f|
-    file_ref = omt_group.find_file_by_path(f)
-    if file_ref.nil?
-      file_ref = omt_group.new_file(f)
-      target.source_build_phase.add_file_reference(file_ref)
     end
   end
 
