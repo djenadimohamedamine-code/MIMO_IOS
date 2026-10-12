@@ -148,6 +148,38 @@ class OMTService {
     }
   }
 
+  /// Start local camera preview via native AVCaptureVideoPreviewLayer PlatformView
+  Future<bool> startCameraPreview({
+    OMTResolution resolution = OMTResolution.hd1080p,
+    OMTFrameRate frameRate = OMTFrameRate.fps30,
+    bool useFrontCamera = false,
+  }) async {
+    try {
+      final result = await _channel.invokeMethod<bool>('startCameraPreview', {
+        'width': resolution.width,
+        'height': resolution.height,
+        'frameRateN': frameRate.numerator,
+        'frameRateD': frameRate.denominator,
+        'useFrontCamera': useFrontCamera,
+      });
+      return result ?? false;
+    } on PlatformException catch (e) {
+      _errorController.add('startCameraPreview error: ${e.message}');
+      return false;
+    }
+  }
+
+  /// Stop local camera preview
+  Future<bool> stopCameraPreview() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('stopCameraPreview');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      _errorController.add('stopCameraPreview error: ${e.message}');
+      return false;
+    }
+  }
+
   /// Toggle diagnostic test pattern (SMPTE 75% color bars with motion indicator)
   Future<bool> setTestPattern(bool enabled) async {
     try {

@@ -82,6 +82,11 @@ import Flutter
                 name: OMTManager.eventChannelName,
                 binaryMessenger: controller.binaryMessenger)
             omtEventChannel.setStreamHandler(OMTManager.shared)
+            
+            // 📷 Inscription de l'aperçu caméra natif OMT
+            let omtRegistrar = self.registrar(forPlugin: "OMTPlugin")
+            let omtCameraFactory = OMTCameraPreviewFactory()
+            omtRegistrar?.register(omtCameraFactory, withId: "com.antigravity/omt_camera_preview")
         }
         // ─────────────────────────────────────────────────────────────────
         

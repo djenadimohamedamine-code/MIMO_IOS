@@ -78,6 +78,13 @@ class _OMTScreenState extends State<OMTScreen>
     // Start discovery automatically
     _startDiscovery();
 
+    // Start native camera preview for framing
+    _omtService.startCameraPreview(
+      resolution: _selectedResolution,
+      frameRate: _selectedFrameRate,
+      useFrontCamera: _useFrontCamera,
+    );
+
     // Poll stats every 2 seconds when transmitting
     _statsTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
       if (_connectionState == OMTConnectionState.transmitting) {
@@ -129,15 +136,12 @@ class _OMTScreenState extends State<OMTScreen>
 
   Future<void> _onCameraSwitch(bool val) async {
     setState(() => _useFrontCamera = val);
-    if (_connectionState == OMTConnectionState.transmitting ||
-        _connectionState == OMTConnectionState.listening ||
-        _connectionState == OMTConnectionState.connected) {
-      await _omtService.switchCamera(useFrontCamera: val);
-    }
+    await _omtService.switchCamera(useFrontCamera: val);
   }
 
   @override
   void dispose() {
+    _omtService.stopCameraPreview();
     _tabController.dispose();
     _nameController.dispose();
     _stateSub?.cancel();
@@ -322,6 +326,11 @@ class _OMTScreenState extends State<OMTScreen>
           _buildSectionHeader(
               '📡 Open Media Transport', 'Transmission vers vMix 29'),
 
+          const SizedBox(height: 16),
+
+          // Camera preview box
+          _buildCameraPreview(),
+
           const SizedBox(height: 20),
 
           // Source name
@@ -450,6 +459,166 @@ class _OMTScreenState extends State<OMTScreen>
             _buildStatsPanel(),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildCameraPreview() {
+    final isLive = _connectionState == OMTConnectionState.transmitting;
+    final isListening = _connectionState == OMTConnectionState.listening ||
+        _connectionState == OMTConnectionState.connected;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        color: Colors.black,
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // Native iOS Preview Layer
+              Theme.of(context).platform == TargetPlatform.iOS
+                  ? const UiKitView(
+                      viewType: 'com.antigravity/omt_camera_preview',
+                    )
+                  : const Center(
+                      child: Text(
+                        'Aperçu Caméra OMT (iOS)',
+                        style: TextStyle(color: Colors.white38, fontSize: 13),
+                      ),
+                    ),
+
+              // Overlay if diagnostic test pattern is active
+              if (_isTestPattern)
+                Container(
+                  color: Colors.black.withOpacity(0.85),
+                  padding: const EdgeInsets.all(16),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: Colors.amberAccent),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.tune, color: Colors.amberAccent, size: 16),
+                              SizedBox(width: 6),
+                              Text(
+                                'MIRE SMPTE 75% ACTIVE',
+                                style: TextStyle(
+                                  color: Colors.amberAccent,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Les barres de couleur SMPTE animées sont envoyées à vMix 29',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white70, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              // Top overlays: status badge and flip button
+              Positioned(
+                top: 10,
+                left: 10,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.65),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: isLive
+                          ? Colors.redAccent
+                          : (isListening ? Colors.amberAccent : Colors.white24),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: isLive
+                              ? Colors.redAccent
+                              : (isListening
+                                  ? Colors.amberAccent
+                                  : Colors.greenAccent),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        isLive
+                            ? 'EN DIRECT'
+                            : (isListening ? 'EN ATTENTE VMIX' : 'APERÇU CADRAGE'),
+                        style: TextStyle(
+                          color: isLive
+                              ? Colors.redAccent
+                              : (isListening
+                                  ? Colors.amberAccent
+                                  : Colors.white),
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${_selectedResolution.width}x${_selectedResolution.height}',
+                        style: const TextStyle(
+                          color: Colors.white60,
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Flip camera button overlay in top-right
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Material(
+                  color: Colors.black.withOpacity(0.55),
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () => _onCameraSwitch(!_useFrontCamera),
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Icon(
+                        _useFrontCamera
+                            ? Icons.camera_front
+                            : Icons.camera_rear,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

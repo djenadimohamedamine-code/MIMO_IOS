@@ -91,6 +91,12 @@ import AVFoundation
         case "stopSending":
             handleStopSending(result: result)
             
+        case "startCameraPreview":
+            handleStartCameraPreview(call: call, result: result)
+            
+        case "stopCameraPreview":
+            handleStopCameraPreview(result: result)
+            
         case "setTestPattern":
             handleSetTestPattern(call: call, result: result)
             
@@ -206,28 +212,38 @@ import AVFoundation
         newSender.start()
         self.sender = newSender
         
-        // Start camera capture
-        let captureConfig = OMTVideoCapture.Config(
-            width: Int(width),
-            height: Int(height),
-            frameRateN: frameRateN,
-            frameRateD: frameRateD,
-            useFrontCamera: useFrontCamera
-        )
-        
-        let capture = OMTVideoCapture()
-        capture.onFrame = { [weak self, weak newSender] pixelData, actualW, actualH in
-            guard let self = self, let sender = newSender else { return }
-            // If test pattern is not active, stream live camera frames with actual dimensions
-            if !self.isTestPatternActive {
-                sender.sendVideoFrame(pixelData: pixelData, width: actualW, height: actualH)
+        // Start camera capture (or reuse running preview capture)
+        if let existingCapture = self.videoCapture, existingCapture.isRunning {
+            existingCapture.onFrame = { [weak self, weak newSender] pixelData, actualW, actualH in
+                guard let self = self, let sender = newSender else { return }
+                if !self.isTestPatternActive {
+                    sender.sendVideoFrame(pixelData: pixelData, width: actualW, height: actualH)
+                }
+            }
+        } else {
+            let captureConfig = OMTVideoCapture.Config(
+                width: Int(width),
+                height: Int(height),
+                frameRateN: frameRateN,
+                frameRateD: frameRateD,
+                useFrontCamera: useFrontCamera
+            )
+            let capture = OMTVideoCapture()
+            capture.onFrame = { [weak self, weak newSender] pixelData, actualW, actualH in
+                guard let self = self, let sender = newSender else { return }
+                if !self.isTestPatternActive {
+                    sender.sendVideoFrame(pixelData: pixelData, width: actualW, height: actualH)
+                }
+            }
+            capture.onError = { [weak self] errorMsg in
+                self?.sendEvent(["type": "error", "message": "Camera: \(errorMsg)"])
+            }
+            capture.startCapture(config: captureConfig)
+            self.videoCapture = capture
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                NotificationCenter.default.post(name: NSNotification.Name("OMTCameraSessionReady"), object: nil)
             }
         }
-        capture.onError = { [weak self] errorMsg in
-            self?.sendEvent(["type": "error", "message": "Camera: \(errorMsg)"])
-        }
-        capture.startCapture(config: captureConfig)
-        self.videoCapture = capture
         
         // Start stats timer
         startStatsTimer()
@@ -238,9 +254,69 @@ import AVFoundation
     
     private func handleStopSending(result: @escaping FlutterResult) {
         setState(.disconnecting)
-        stopAllSending()
+        // Stop sender network pipeline, keep camera preview running smoothly
+        statsTimer?.invalidate()
+        statsTimer = nil
+        stopTestPatternGenerator()
+        isTestPatternActive = false
+        testPatternFrameIndex = 0
+        sender?.stop()
+        sender = nil
+        bytesSinceLastCalc = 0
+        currentBitrateKbps = 0
         setState(.idle)
         result(nil)
+    }
+    
+    private func handleStartCameraPreview(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        let args = call.arguments as? [String: Any]
+        let width = Int(args?["width"] as? Int ?? 1920)
+        let height = Int(args?["height"] as? Int ?? 1080)
+        let frameRateN = Int32(args?["frameRateN"] as? Int ?? 30000)
+        let frameRateD = Int32(args?["frameRateD"] as? Int ?? 1001)
+        let useFrontCamera = args?["useFrontCamera"] as? Bool ?? false
+        
+        if let existing = self.videoCapture, existing.isRunning {
+            NotificationCenter.default.post(name: NSNotification.Name("OMTCameraSessionReady"), object: nil)
+            result(true)
+            return
+        }
+        
+        let config = OMTVideoCapture.Config(
+            width: width,
+            height: height,
+            frameRateN: frameRateN,
+            frameRateD: frameRateD,
+            useFrontCamera: useFrontCamera
+        )
+        
+        let capture = OMTVideoCapture()
+        capture.onFrame = { [weak self] pixelData, actualW, actualH in
+            guard let self = self, let sender = self.sender else { return }
+            if !self.isTestPatternActive {
+                sender.sendVideoFrame(pixelData: pixelData, width: actualW, height: actualH)
+            }
+        }
+        capture.onError = { [weak self] errorMsg in
+            self?.sendEvent(["type": "error", "message": "Camera: \(errorMsg)"])
+        }
+        capture.startCapture(config: config)
+        self.videoCapture = capture
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            NotificationCenter.default.post(name: NSNotification.Name("OMTCameraSessionReady"), object: nil)
+        }
+        
+        result(true)
+    }
+    
+    private func handleStopCameraPreview(result: @escaping FlutterResult) {
+        // Only stop camera capture if not actively transmitting
+        if sender == nil {
+            videoCapture?.stopCapture()
+            videoCapture = nil
+        }
+        result(true)
     }
     
     private func handleSetTestPattern(call: FlutterMethodCall, result: @escaping FlutterResult) {
