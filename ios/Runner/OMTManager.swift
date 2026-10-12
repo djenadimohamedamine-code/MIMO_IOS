@@ -26,6 +26,7 @@ import AVFoundation
         case discovering = "discovering"
         case listening = "listening"        // Port open, published via Bonjour, 0 clients
         case connected = "connected"        // vMix 29 connected, waiting for subscription
+        case connecting = "connecting"
         case transmitting = "transmitting"  // vMix 29 subscribed and actively streaming
         case receiving = "receiving"
         case disconnecting = "disconnecting"

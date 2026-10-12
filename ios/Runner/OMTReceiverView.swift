@@ -63,13 +63,13 @@ class OMTReceiverDisplayUIView: UIView {
     
     @objc private func onFrameDecoded(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
-              let cgImage = userInfo["image"] as? CGImage else { return }
+              let image = userInfo["image"] else { return }
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            self.displayLayer.contents = cgImage
+            self.displayLayer.contents = image
             CATransaction.commit()
         }
     }
