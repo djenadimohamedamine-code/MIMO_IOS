@@ -10,6 +10,7 @@ import AVFoundation
 ///   Flutter  ←→  OMTManager  ←→  OMTSender  ←→  vMix 29 (TCP)
 ///                             ←→  OMTDiscovery  ←→  Bonjour
 ///                             ←→  OMTVideoCapture  ←→  Camera
+@available(iOS 13.0, *)
 @objc class OMTManager: NSObject {
     
     // MARK: - Channels

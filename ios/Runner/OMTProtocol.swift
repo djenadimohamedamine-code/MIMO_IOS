@@ -145,16 +145,16 @@ extension Data {
         append(value)
     }
     mutating func appendLE(_ value: UInt16) {
-        withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
+        Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
     }
     mutating func appendLE(_ value: Int32) {
-        withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
+        Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
     }
     mutating func appendLE(_ value: Int64) {
-        withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
+        Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
     }
     mutating func appendLE(_ value: Float) {
         var v = value.bitPattern.littleEndian
-        withUnsafeBytes(of: &v) { append(contentsOf: $0) }
+        Swift.withUnsafeBytes(of: &v) { append(contentsOf: $0) }
     }
 }

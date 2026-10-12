@@ -5,6 +5,7 @@ import Network
 /// Service type: _omt._tcp (as defined in the OMT protocol)
 ///
 /// This is completely independent of NDI discovery.
+@available(iOS 13.0, *)
 class OMTDiscovery: NSObject {
     
     // MARK: - Callbacks

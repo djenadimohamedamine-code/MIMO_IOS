@@ -69,18 +69,20 @@ import Flutter
         // ─────────────────────────────────────────────────────────────────
         // 📡 Setup Canal OMT (Open Media Transport) — Indépendant de NDI
         // ─────────────────────────────────────────────────────────────────
-        let omtMethodChannel = FlutterMethodChannel(
-            name: OMTManager.channelName,
-            binaryMessenger: controller.binaryMessenger)
-        
-        omtMethodChannel.setMethodCallHandler({ (call: FlutterMethodCall, result: @escaping FlutterResult) -> Void in
-            OMTManager.shared.handle(call: call, result: result)
-        })
-        
-        let omtEventChannel = FlutterEventChannel(
-            name: OMTManager.eventChannelName,
-            binaryMessenger: controller.binaryMessenger)
-        omtEventChannel.setStreamHandler(OMTManager.shared)
+        if #available(iOS 13.0, *) {
+            let omtMethodChannel = FlutterMethodChannel(
+                name: OMTManager.channelName,
+                binaryMessenger: controller.binaryMessenger)
+            
+            omtMethodChannel.setMethodCallHandler({ (call: FlutterMethodCall, result: @escaping FlutterResult) -> Void in
+                OMTManager.shared.handle(call: call, result: result)
+            })
+            
+            let omtEventChannel = FlutterEventChannel(
+                name: OMTManager.eventChannelName,
+                binaryMessenger: controller.binaryMessenger)
+            omtEventChannel.setStreamHandler(OMTManager.shared)
+        }
         // ─────────────────────────────────────────────────────────────────
         
         // ­ƒôï Affichage du crash log si besoin

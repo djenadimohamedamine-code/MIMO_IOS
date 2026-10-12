@@ -8,6 +8,7 @@ import Network
 ///
 /// OMT senders advertise themselves via DNS-SD; receivers connect to them.
 /// vMix 29 discovers the sender via Bonjour and then connects via TCP.
+@available(iOS 13.0, *)
 class OMTSender {
     
     // MARK: - Configuration
