@@ -15,6 +15,8 @@ begin
     config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
     config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17'
     config.build_settings['CLANG_CXX_LIBRARY'] = 'libc++'
+    config.build_settings['OTHER_CFLAGS'] = '$(inherited) -fdeclspec'
+    config.build_settings['OTHER_CPLUSPLUSFLAGS'] = '$(inherited) -fdeclspec'
     # Never treat warnings as errors (fixes 3rd-party pod deprecation warnings)
     config.build_settings['SWIFT_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
     config.build_settings['GCC_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
