@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'omt_protocol.dart';
 import 'omt_service.dart';
 
@@ -344,6 +345,18 @@ class _OMTScreenState extends State<OMTScreen>
     );
   }
 
+  Future<void> _copyDiagnosticLogs() async {
+    final logs = await _omtService.getDiagnosticLogs();
+    final stats = await _omtService.getStats();
+    final report = 'MIMO OMT Diagnostic\nState: ${_connectionState.name}\nStats: $stats\n\nTCP events:\n${logs.isEmpty ? 'No events captured yet' : logs}';
+    await Clipboard.setData(ClipboardData(text: report));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Diagnostic OMT copié. Collez-le dans ChatGPT.')),
+      );
+    }
+  }
+
   // ─── SEND TAB ─────────────────────────────────────────────────────────────
 
   Widget _buildSendTab() {
@@ -481,6 +494,17 @@ class _OMTScreenState extends State<OMTScreen>
           ),
 
           const SizedBox(height: 20),
+
+          // Copy on-device TCP events without a Mac or USB cable.
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _copyDiagnosticLogs,
+              icon: const Icon(Icons.copy),
+              label: const Text('Copier les logs OMT'),
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.amberAccent),
+            ),
+          ),
 
           // Info box
           _buildInfoBox(),
