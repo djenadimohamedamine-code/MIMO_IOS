@@ -1174,9 +1174,6 @@ class _OMTScreenState extends State<OMTScreen>
                     ? '${_stats['audioSampleRate']} Hz • ${_stats['audioChannels'] ?? 2} ch'
                     : 'Aucun flux audio'),
                 _statsRow('Trames audio reçues', '${_stats['audioFramesReceived'] ?? 0}'),
-          _statsRow('Canaux actifs (masque)', '0x${((_stats['audioActiveChannelsMask'] as num?)?.toInt() ?? 0).toRadixString(16).toUpperCase()}'),
-          _statsRow('Niveau PCM (crête)', '${((_stats['audioPCMpeak'] as num?)?.toDouble() ?? 0).toStringAsFixed(3)}'),
-          _statsRow('Données audio/trame', '${_stats['audioPayloadBytes'] ?? 0} octets'),
               ],
             ),
           ),

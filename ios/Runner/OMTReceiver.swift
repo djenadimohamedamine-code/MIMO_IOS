@@ -61,9 +61,6 @@ class OMTReceiver {
     private(set) var audioSampleRate: Int32 = 0
     private(set) var audioChannels: Int32 = 0
     private(set) var audioCodecName: String = "FPA1"
-    private(set) var audioActiveChannelsMask: UInt32 = 0
-    private(set) var audioPayloadBytes: Int = 0
-    private(set) var audioPCMpeak: Float = 0
     
     private var lastStatTime = Date()
     private var bytesSinceLastStat: Int64 = 0
@@ -100,9 +97,6 @@ class OMTReceiver {
         audioFramesReceived = 0
         audioSampleRate = 0
         audioChannels = 0
-        audioActiveChannelsMask = 0
-        audioPayloadBytes = 0
-        audioPCMpeak = 0
         audioReceiveBuffer.removeAll(keepingCapacity: true)
         audioPlayer = OMTAudioPlayer()
         
@@ -681,8 +675,6 @@ class OMTReceiver {
         
         self.audioSampleRate = audioHdr.sampleRate
         self.audioChannels = audioHdr.channels
-        self.audioActiveChannelsMask = audioHdr.activeChannels
-        self.audioPayloadBytes = max(0, payload.count - 24)
         if audioHdr.codec == OMTAudioCodec.fpa1 {
             self.audioCodecName = "FPA1"
         } else {
@@ -694,20 +686,7 @@ class OMTReceiver {
             onDiagnostic?("First OMT audio frame: \(audioHdr.sampleRate) Hz, \(audioHdr.channels) ch, mask=0x\(String(audioHdr.activeChannels, radix: 16))")
         }
         
-        guard audioHdr.codec == OMTAudioCodec.fpa1 else { return }
-
         let audioData = payload.subdata(in: 24..<payload.count)
-        // Measure a small PCM sample to distinguish silent input from an output issue.
-        let totalSamples = audioData.count / MemoryLayout<Float>.size
-        var peak: Float = 0
-        if totalSamples > 0 {
-            let step = max(1, totalSamples / 128)
-            for i in Swift.stride(from: 0, to: totalSamples, by: step) {
-                let sample = Float(bitPattern: UInt32(bitPattern: audioData.readLEInt32(offset: i * 4)))
-                if sample.isFinite { peak = max(peak, abs(sample)) }
-            }
-        }
-        audioPCMpeak = peak
         audioPlayer?.playAudioFrame(
             sampleRate: audioHdr.sampleRate,
             channels: audioHdr.channels,
@@ -736,9 +715,6 @@ class OMTReceiver {
             "audioSampleRate": audioSampleRate,
             "audioChannels": audioChannels,
             "audioCodec": audioCodecName,
-            "audioActiveChannelsMask": Int(audioActiveChannelsMask),
-            "audioPayloadBytes": audioPayloadBytes,
-            "audioPCMpeak": Double(audioPCMpeak),
             "state": isRunning ? "receiving" : "idle"
         ]
     }
@@ -755,8 +731,6 @@ class OMTAudioPlayer {
     private let playerNode = AVAudioPlayerNode()
     private var currentFormat: AVAudioFormat?
     private let audioQueue = DispatchQueue(label: "com.antigravity.omt.audioplayer", qos: .userInteractive)
-    private var scheduledBufferCount = 0
-    private let maximumScheduledBuffers = 10
     
     init() {
         audioQueue.async { [weak self] in
@@ -811,31 +785,15 @@ class OMTAudioPlayer {
             
             let channelByteCount = Int(samplesPerChannel) * MemoryLayout<Float>.size
             var dataOffset = 0
-            // Accept a full PCM payload from sources that omit the active bitmask.
-            // A genuinely muted frame with no PCM remains silent.
-            let recoverFullChannelMask = activeChannelsMask == 0 &&
-                audioData.count >= channelByteCount * Int(channels)
-            let effectiveMask: UInt32 = recoverFullChannelMask
-                ? ((UInt32(1) << UInt32(channels)) - 1)
-                : activeChannelsMask
-            let activeCount = (0..<Int(channels)).filter {
-                (effectiveMask & (UInt32(1) << UInt32($0))) != 0
-            }.count
-            guard audioData.count >= activeCount * channelByteCount else {
-                NSLog("[OMTAudioPlayer] Truncated FPA1: %d bytes, active=%d",
-                      audioData.count, activeCount)
-                return
-            }
             
             for ch in 0..<Int(channels) {
                 let channelPtr = floatChannelData[ch]
-                let isActive = (effectiveMask & (UInt32(1) << ch)) != 0
-
-                if isActive {
-                    // Raw copy avoids potentially unaligned Float pointer rebinding.
+                let isActive = (activeChannelsMask & (UInt32(1) << ch)) != 0
+                
+                if isActive && (dataOffset + channelByteCount <= audioData.count) {
                     audioData.withUnsafeBytes { rawPtr in
                         if let src = rawPtr.baseAddress?.advanced(by: dataOffset) {
-                            memcpy(channelPtr, src, channelByteCount)
+                            channelPtr.update(from: src.assumingMemoryBound(to: Float.self), count: Int(samplesPerChannel))
                         }
                     }
                     dataOffset += channelByteCount
@@ -858,23 +816,14 @@ class OMTAudioPlayer {
                 self.playerNode.play()
             }
             
-            // Avoid unbounded stale audio if the render device falls behind.
-            guard self.scheduledBufferCount < self.maximumScheduledBuffers else { return }
-            self.scheduledBufferCount += 1
-            self.playerNode.scheduleBuffer(pcmBuffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-                self?.audioQueue.async { [weak self] in
-                    guard let self = self else { return }
-                    self.scheduledBufferCount = max(0, self.scheduledBufferCount - 1)
-                }
-            }
+            self.playerNode.scheduleBuffer(pcmBuffer, completionHandler: nil)
         }
     }
     
     private func reconfigure(sampleRate: Double, channels: AVAudioChannelCount) {
         playerNode.stop()
         audioEngine.stop()
-        scheduledBufferCount = 0
-
+        
         guard let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: sampleRate,
@@ -900,7 +849,6 @@ class OMTAudioPlayer {
             playerNode.stop()
             audioEngine.stop()
             audioEngine.disconnectNodeOutput(playerNode)
-            scheduledBufferCount = 0
             currentFormat = nil
         }
     }
