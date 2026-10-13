@@ -291,6 +291,15 @@ class OMTService {
     }
   }
 
+  /// Read the bounded on-device TCP diagnostic history.
+  Future<String> getDiagnosticLogs() async {
+    try {
+      return await _channel.invokeMethod<String>('getDiagnosticLogs') ?? '';
+    } on PlatformException catch (e) {
+      return 'Diagnostic unavailable: ${e.message}';
+    }
+  }
+
   // ─── CLEANUP ──────────────────────────────────────────────────────────────
 
   void dispose() {
