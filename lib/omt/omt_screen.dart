@@ -1493,8 +1493,10 @@ class _OMTFullscreenPageState extends State<OMTFullscreenPage> {
 
     return PopScope(
       canPop: true,
-      onPopInvokedWithResult: (didPop, result) {
-        _restoreOrientation();
+      onPopInvoked: (didPop) {
+        if (didPop) {
+          _restoreOrientation();
+        }
       },
       child: Scaffold(
         backgroundColor: Colors.black,
