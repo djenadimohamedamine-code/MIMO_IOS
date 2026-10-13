@@ -134,7 +134,14 @@ class OMTVideoCapture: NSObject {
     private func setupCaptureSession(config: Config) {
         let newSession = AVCaptureSession()
         newSession.beginConfiguration()
-        
+
+        // Mirror the working NDI sender: choose the capture preset before setting FPS.
+        // A late sessionPreset change can reset the active camera format/cadence.
+        let preset = selectSessionPreset(width: config.width, height: config.height)
+        if newSession.canSetSessionPreset(preset) {
+            newSession.sessionPreset = preset
+        }
+
         // Select camera
         let position: AVCaptureDevice.Position = config.useFrontCamera ? .front : .back
         guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera,
@@ -191,14 +198,11 @@ class OMTVideoCapture: NSObject {
             newSession.addOutput(output)
         }
         
-        // Set resolution preset
-        let preset = selectSessionPreset(width: config.width, height: config.height)
-        if newSession.canSetSessionPreset(preset) {
-            newSession.sessionPreset = preset
-        }
-        
         // Set video orientation based on aspect ratio
         if let connection = output.connection(with: .video) {
+            if connection.isVideoStabilizationSupported {
+                connection.preferredVideoStabilizationMode = .off
+            }
             if config.width >= config.height {
                 // Broadcast standard is landscape for 16:9 resolutions (1080p, 720p)
                 connection.videoOrientation = .landscapeRight

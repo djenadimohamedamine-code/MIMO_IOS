@@ -62,16 +62,24 @@ class OMTReceiverDisplayUIView: UIView {
     }
     
     @objc private func onFrameDecoded(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let image = userInfo["image"] else { return }
-        
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            self.displayLayer.contents = image
-            CATransaction.commit()
+        guard let image = notification.userInfo?["image"] as? CGImage else { return }
+
+        // OMTReceiver already posts decoded frames on the main queue.
+        // Do not defer each frame a second time before presenting it.
+        if Thread.isMainThread {
+            displayDecodedFrame(image)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.displayDecodedFrame(image)
+            }
         }
+    }
+
+    private func displayDecodedFrame(_ image: CGImage) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        displayLayer.contents = image
+        CATransaction.commit()
     }
     
     override func layoutSubviews() {

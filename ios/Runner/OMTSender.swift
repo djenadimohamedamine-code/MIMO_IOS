@@ -174,7 +174,10 @@ class OMTSender {
         
         for tryPortNum in startPort...maxPort {
             do {
-                let params = NWParameters.tcp
+                // Send each compressed video frame promptly (no Nagle buffering).
+                let tcpOptions = NWProtocolTCP.Options()
+                tcpOptions.noDelay = true
+                let params = NWParameters(tls: nil, tcp: tcpOptions)
                 params.allowLocalEndpointReuse = true
                 guard let candidatePort = NWEndpoint.Port(rawValue: tryPortNum) else { continue }
                 let l = try NWListener(using: params, on: candidatePort)
