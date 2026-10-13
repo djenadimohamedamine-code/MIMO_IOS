@@ -102,15 +102,16 @@ class OMTReceiver {
         
         conn.stateUpdateHandler = { [weak self] newState in
             guard let self = self else { return }
+            NSLog("[OMTReceiver][TCP] %@:%d state=%@", self.host, self.port, String(describing: newState))
             switch newState {
             case .ready:
                 NSLog("[OMTReceiver] Connected to %@:%d (%@)", self.host, self.port, self.sourceName)
-                self.onStateChanged?(.receiving)
+                // TCP ready does not mean OMT subscription or video is established.
                 self.sendSubscription()
                 self.scheduleReceive()
                 
             case .failed(let error):
-                NSLog("[OMTReceiver] Connection failed: %@", error.localizedDescription)
+                NSLog("[OMTReceiver] Connection failed at %@:%d: %@", self.host, self.port, String(describing: error))
                 self.onError?("Erreur réseau: \(error.localizedDescription)")
                 self.onStateChanged?(.error)
                 self.stop()
@@ -120,7 +121,7 @@ class OMTReceiver {
                 self.onStateChanged?(.idle)
                 
             case .waiting(let error):
-                NSLog("[OMTReceiver] Connection waiting: %@", error.localizedDescription)
+                NSLog("[OMTReceiver] Connection waiting at %@:%d: %@", self.host, self.port, String(describing: error))
                 
             default:
                 break
@@ -158,10 +159,10 @@ class OMTReceiver {
         
         conn.send(content: frameData, completion: .contentProcessed { [weak self] error in
             if let error = error {
-                NSLog("[OMTReceiver] Failed to send subscription: %@", error.localizedDescription)
+                NSLog("[OMTReceiver] Failed to send subscription (%d bytes): %@", frameData.count, String(describing: error))
                 self?.onError?("Abonnement vidéo échoué: \(error.localizedDescription)")
             } else {
-                NSLog("[OMTReceiver] Subscription sent: %@", subscribeXml)
+                NSLog("[OMTReceiver] Subscription sent (%d bytes): %@", frameData.count, subscribeXml)
             }
         })
     }
@@ -175,7 +176,7 @@ class OMTReceiver {
             guard let self = self else { return }
             
             if let error = error {
-                NSLog("[OMTReceiver] Receive error: %@", error.localizedDescription)
+                NSLog("[OMTReceiver] Receive error after %lld bytes: %@", self.bytesReceived, String(describing: error))
                 self.onError?(error.localizedDescription)
                 self.stop()
                 return
@@ -221,9 +222,8 @@ class OMTReceiver {
         while receiveBuffer.count >= 16 {
             let frameType = receiveBuffer[1]
             
-            let dataLen: Int32 = receiveBuffer.withUnsafeBytes { ptr in
-                ptr.load(fromByteOffset: 12, as: Int32.self).littleEndian
-            }
+            // Data storage is not guaranteed to be aligned for Int32.load.
+            let dataLen = receiveBuffer.readLEInt32(offset: 12)
             
             // Sanity check dataLen (protect against corrupt stream / desync)
             guard dataLen >= 0 && dataLen <= 60_000_000 else {
@@ -256,6 +256,10 @@ class OMTReceiver {
     
     private func handleVideoPayload(_ payload: Data) {
         framesReceived += 1
+        if framesReceived == 1 {
+            NSLog("[OMTReceiver] First complete OMT video frame: %d payload bytes", payload.count)
+            onStateChanged?(.receiving)
+        }
         
         // Video payload begins with 32-byte Video Extended Header:
         // [0..3]:   Codec FourCC (Int32 LE) e.g. 0x31584D56 ('VMX1')
@@ -271,9 +275,9 @@ class OMTReceiver {
             return
         }
         
-        let codec: Int32 = payload.withUnsafeBytes { $0.load(fromByteOffset: 0, as: Int32.self).littleEndian }
-        let width: Int32 = payload.withUnsafeBytes { $0.load(fromByteOffset: 4, as: Int32.self).littleEndian }
-        let height: Int32 = payload.withUnsafeBytes { $0.load(fromByteOffset: 8, as: Int32.self).littleEndian }
+        let codec = payload.readLEInt32(offset: 0)
+        let width = payload.readLEInt32(offset: 4)
+        let height = payload.readLEInt32(offset: 8)
         
         guard width > 0 && width <= 4096 && height > 0 && height <= 4096 else {
             framesDropped += 1
