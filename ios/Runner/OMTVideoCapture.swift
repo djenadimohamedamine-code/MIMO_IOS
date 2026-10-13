@@ -24,8 +24,10 @@ class OMTVideoCapture: NSObject {
     
     // MARK: - Callbacks
     
-    /// Called on each captured frame with UYVY pixel data and actual dimensions
+    /// Called on each captured frame with UYVY pixel data and actual dimensions (legacy/fallback)
     var onFrame: ((Data, Int32, Int32) -> Void)?
+    /// High-performance zero-copy CVPixelBuffer callback directly from hardware camera buffer
+    var onPixelBuffer: ((CVPixelBuffer, Int32, Int32) -> Void)?
     var onError: ((String) -> Void)?
     
     // MARK: - State
@@ -248,15 +250,21 @@ extension OMTVideoCapture: AVCaptureVideoDataOutputSampleBufferDelegate {
             lastStatsTime = now
         }
         
-        // Extract NV12 planes and convert to UYVY (4:2:2) format for OMT
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-        
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         
         actualWidth = Int32(width)
         actualHeight = Int32(height)
+        
+        // Fast path: pass CVPixelBuffer directly to sender (< 2ms) bypassing 35ms software loop
+        // The sender retains and locks the CVPixelBuffer safely on its serial encoding thread.
+        if let onPixelBuffer = self.onPixelBuffer {
+            onPixelBuffer(pixelBuffer, Int32(width), Int32(height))
+            return
+        }
+        
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
         
         guard let yBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0),
               let uvBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1) else {

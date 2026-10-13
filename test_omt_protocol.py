@@ -23,6 +23,33 @@ def build_metadata_frame(xml_str):
     main_hdr = struct.pack('<BBqhI', version, frame_type, timestamp, meta_len, data_len)
     return main_hdr + xml_bytes
 
+def build_audio_frame(codec, sample_rate, samples_per_channel, channels, active_channels, audio_payload):
+    version = 1
+    frame_type = 4  # Audio
+    timestamp = 10000000
+    metadata_len = 0
+    data_len = 24 + len(audio_payload)
+    main_hdr = struct.pack('<BBqhI', version, frame_type, timestamp, metadata_len, data_len)
+    
+    reserved1 = 0
+    audio_ext_hdr = struct.pack('<iiiiIi', codec, sample_rate, samples_per_channel, channels, active_channels, reserved1)
+    return main_hdr + audio_ext_hdr + audio_payload
+
+def decode_planar_fpa1_audio(channels, samples_per_channel, active_channels, raw_payload):
+    """Simulates OMTAudioPlayer active channel bitmask decompression to non-interleaved float buffers."""
+    channel_bytes = samples_per_channel * 4
+    channels_data = []
+    offset = 0
+    for ch in range(channels):
+        is_active = (active_channels & (1 << ch)) != 0
+        if is_active and (offset + channel_bytes <= len(raw_payload)):
+            ch_data = raw_payload[offset:offset + channel_bytes]
+            offset += channel_bytes
+        else:
+            ch_data = bytes(channel_bytes)  # Muted: filled with zeros
+        channels_data.append(ch_data)
+    return channels_data
+
 def run_tests():
     print("=== OMT PROTOCOL SPECIFICATION COMPLIANCE TESTS ===")
     
@@ -97,9 +124,65 @@ def run_tests():
     assert w_1080 == 1920 and h_1080 == 1080, f"Expected 1920x1080, got {w_1080}x{h_1080}"
     print("[PASS] Test 5: Dynamic video dimension adaptation (1280x720 and 1920x1080)")
 
+    # Test 6: Audio Extended Header (24 bytes) & FPA1 Codec FourCC
+    fpa1_fourcc = 0x31415046  # 'FPA1' LE
+    sample_rate = 48000
+    samples_per_ch = 1024
+    channels = 2
+    active_channels = 3  # Both Ch 0 and Ch 1 active (1 | 2 = 3)
+    dummy_audio = b'\x00' * (channels * samples_per_ch * 4)
+    audio_frame = build_audio_frame(fpa1_fourcc, sample_rate, samples_per_ch, channels, active_channels, dummy_audio)
+    
+    assert len(audio_frame) == 16 + 24 + len(dummy_audio), f"Expected {16 + 24 + len(dummy_audio)}, got {len(audio_frame)}"
+    v, ft, ts, mlen, dlen = struct.unpack('<BBqhI', audio_frame[:16])
+    assert ft == 4, f"FrameType must be 4 (Audio), got {ft}"
+    assert dlen == 24 + len(dummy_audio), f"DataLength mismatch: {dlen}"
+    
+    codec, sr, spc, chs, act_mask, res1 = struct.unpack('<iiiiIi', audio_frame[16:40])
+    assert codec == fpa1_fourcc, f"Expected 0x31415046 ('FPA1'), got {hex(codec)}"
+    assert audio_frame[16:20] == b'FPA1', f"Expected b'FPA1', got {audio_frame[16:20]}"
+    assert sr == 48000, f"Expected 48000, got {sr}"
+    assert spc == 1024, f"Expected 1024, got {spc}"
+    assert chs == 2, f"Expected 2, got {chs}"
+    assert act_mask == 3, f"Expected 3, got {act_mask}"
+    assert res1 == 0, f"Expected 0, got {res1}"
+    print(f"[PASS] Test 6: Audio Extended Header (24 bytes) & FPA1 Codec FourCC ('{audio_frame[16:20].decode()}' = 0x{codec:08X})")
+
+    # Test 7: FPA1 Planar Float32 PCM deinterleaving & Active Channel Mask handling
+    # Create distinct test audio buffers for Left and Right channels
+    left_sample = struct.pack('<f', 0.75) * 1024
+    right_sample = struct.pack('<f', -0.5) * 1024
+    
+    # Case A: Both channels active (mask = 3)
+    payload_a = left_sample + right_sample
+    decoded_a = decode_planar_fpa1_audio(2, 1024, 3, payload_a)
+    assert len(decoded_a) == 2
+    assert decoded_a[0] == left_sample
+    assert decoded_a[1] == right_sample
+    
+    # Case B: Only Left channel active (mask = 1), Right channel omitted from stream
+    payload_b = left_sample
+    decoded_b = decode_planar_fpa1_audio(2, 1024, 1, payload_b)
+    assert len(decoded_b) == 2
+    assert decoded_b[0] == left_sample
+    assert decoded_b[1] == bytes(1024 * 4)  # Muted channel must be zero-padded
+    
+    # Case C: All channels muted (mask = 0), payload is empty
+    payload_c = b''
+    decoded_c = decode_planar_fpa1_audio(2, 1024, 0, payload_c)
+    assert len(decoded_c) == 2
+    assert decoded_c[0] == bytes(1024 * 4)
+    assert decoded_c[1] == bytes(1024 * 4)
+    
+    # Case D: Audio handshake subscription matching libomtnet dual-connection
+    audio_sub = build_metadata_frame('<OMTSubscribe Audio="true" />')
+    assert audio_sub[16:].decode('utf-8') == '<OMTSubscribe Audio="true" />'
+    print("[PASS] Test 7: FPA1 Planar Float32 PCM decompression & ActiveChannel bitmask handling (Stereo, Left-only, Muted)")
+
     print("--------------------------------------------------")
-    print("RESULT: ALL 5 OMT SPEC PROTOCOL TESTS PASSED 100%!")
+    print("RESULT: ALL 7 OMT SPEC PROTOCOL TESTS PASSED 100%!")
 
 if __name__ == '__main__':
     run_tests()
+
 

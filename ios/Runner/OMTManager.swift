@@ -240,10 +240,21 @@ import AVFoundation
         
         // Start camera capture (or reuse running preview capture)
         if let existingCapture = self.videoCapture, existingCapture.isRunning {
-            existingCapture.onFrame = { [weak self, weak newSender] pixelData, actualW, actualH in
-                guard let self = self, let sender = newSender else { return }
-                if !self.isTestPatternActive {
-                    sender.sendVideoFrame(pixelData: pixelData, width: actualW, height: actualH)
+            if newSender.isUsingVMX1 {
+                existingCapture.onPixelBuffer = { [weak self, weak newSender] pixelBuffer, actualW, actualH in
+                    guard let self = self, let sender = newSender else { return }
+                    if !self.isTestPatternActive {
+                        sender.sendPixelBuffer(pixelBuffer, width: actualW, height: actualH)
+                    }
+                }
+                existingCapture.onFrame = nil
+            } else {
+                existingCapture.onPixelBuffer = nil
+                existingCapture.onFrame = { [weak self, weak newSender] pixelData, actualW, actualH in
+                    guard let self = self, let sender = newSender else { return }
+                    if !self.isTestPatternActive {
+                        sender.sendVideoFrame(pixelData: pixelData, width: actualW, height: actualH)
+                    }
                 }
             }
         } else {
@@ -255,10 +266,21 @@ import AVFoundation
                 useFrontCamera: useFrontCamera
             )
             let capture = OMTVideoCapture()
-            capture.onFrame = { [weak self, weak newSender] pixelData, actualW, actualH in
-                guard let self = self, let sender = newSender else { return }
-                if !self.isTestPatternActive {
-                    sender.sendVideoFrame(pixelData: pixelData, width: actualW, height: actualH)
+            if newSender.isUsingVMX1 {
+                capture.onPixelBuffer = { [weak self, weak newSender] pixelBuffer, actualW, actualH in
+                    guard let self = self, let sender = newSender else { return }
+                    if !self.isTestPatternActive {
+                        sender.sendPixelBuffer(pixelBuffer, width: actualW, height: actualH)
+                    }
+                }
+                capture.onFrame = nil
+            } else {
+                capture.onPixelBuffer = nil
+                capture.onFrame = { [weak self, weak newSender] pixelData, actualW, actualH in
+                    guard let self = self, let sender = newSender else { return }
+                    if !self.isTestPatternActive {
+                        sender.sendVideoFrame(pixelData: pixelData, width: actualW, height: actualH)
+                    }
                 }
             }
             capture.onError = { [weak self] errorMsg in
@@ -317,6 +339,12 @@ import AVFoundation
         )
         
         let capture = OMTVideoCapture()
+        capture.onPixelBuffer = { [weak self] pixelBuffer, actualW, actualH in
+            guard let self = self, let sender = self.sender else { return }
+            if !self.isTestPatternActive {
+                sender.sendPixelBuffer(pixelBuffer, width: actualW, height: actualH)
+            }
+        }
         capture.onFrame = { [weak self] pixelData, actualW, actualH in
             guard let self = self, let sender = self.sender else { return }
             if !self.isTestPatternActive {

@@ -101,6 +101,23 @@ class NDIView: NSObject, FlutterPlatformView {
         case "toggleRecord":
             isRecording ? stopRecording() : startRecording()
             result(isRecording)
+        case "setMuted":
+            if let m = call.arguments as? Bool {
+                self.isMuted = m
+                if m {
+                    playerNode?.pause()
+                } else {
+                    if audioEngine == nil {
+                        setupAudioEngine()
+                    } else {
+                        if !(audioEngine?.isRunning ?? false) {
+                            try? audioEngine?.start()
+                        }
+                        playerNode?.play()
+                    }
+                }
+                result(true)
+            }
         case "switchQuality":
             if let q = call.arguments as? String {
                 self.currentQuality = q
@@ -116,44 +133,68 @@ class NDIView: NSObject, FlutterPlatformView {
     }
 
     private func refreshSources() {
-        print("­ƒöä Nettoyage du cache mDNS et recherche de nouvelles sources...")
+        print("🔄 Nettoyage du cache mDNS et recherche de nouvelles sources...")
         NDIManager.shared.sourcesQueue.async {
             guard let find = NDIManager.shared.findInstance else { return }
-            // On force un rafra├«chissement r├®seau (1s) pour retrouver les cam├®ras PTZ
             NDIlib_find_wait_for_sources(find, 1000)
             var noSources: UInt32 = 0
             let _ = NDIlib_find_get_current_sources(find, &noSources)
-            print("Ô£à Refresh termin├® : \(noSources) sources d├®tect├®es sur le plateau.")
+            print("✅ Refresh terminé : \(noSources) sources détectées sur le plateau.")
         }
     }
 
-    private func setupAudioEngine() {
-        audioEngine = AVAudioEngine()
-        playerNode = AVAudioPlayerNode()
+    private func setupAudioEngine(sampleRate: Double = 48000.0) {
+        if audioEngine == nil {
+            audioEngine = AVAudioEngine()
+        }
+        if playerNode == nil {
+            playerNode = AVAudioPlayerNode()
+        }
         guard let engine = audioEngine, let node = playerNode else { return }
         
-        engine.attach(node)
-        audioFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)
-        
-        if let format = audioFormat { 
-            engine.connect(node, to: engine.mainMixerNode, format: format) 
+        if !engine.attachedNodes.contains(node) {
+            engine.attach(node)
         }
         
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2) else { return }
+        self.audioFormat = format
+        
+        engine.disconnectNodeOutput(node)
+        engine.connect(node, to: engine.mainMixerNode, format: format)
+        
+        configureAudioSessionForPlayback()
+        
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+            if !engine.isRunning {
+                engine.prepare()
+                try engine.start()
+            }
+            if !node.isPlaying {
+                node.play()
+            }
+            NSLog("[NDIView] Audio Engine Ready @ %.0f Hz", sampleRate)
+        } catch {
+            NSLog("[NDIView] Audio Engine start error: %@", error.localizedDescription)
+        }
+    }
+
+    private func configureAudioSessionForPlayback() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            // Support both standalone playback and mixed playAndRecord (e.g. if camera preview is active)
+            try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth])
+            try session.overrideOutputAudioPort(.speaker)
             try session.setActive(true)
-            
-            engine.prepare() 
-            try engine.start()
-            node.play()
-            print("Ô£à Audio Engine Ready")
-        } catch { 
-            print("ÔØî Audio Session Error: \(error)") 
+        } catch {
+            NSLog("[NDIView] AudioSession configure warning: %@", error.localizedDescription)
         }
     }
 
     private func startReceive(sourceName: String, quality: String) {
+        // Flush audio buffer queue immediately on source switch
+        playerNode?.stop()
+        playerNode?.play()
+        
         receiveQueue.async { [weak self] in
             guard let self = self else { return }
             if let old = self.recvInstance { NDIlib_recv_destroy(old); self.recvInstance = nil }
@@ -275,51 +316,79 @@ class NDIView: NSObject, FlutterPlatformView {
     }
 
     private func playAudio(_ frame: NDIlib_audio_frame_v2_t) {
-        guard let engine = self.audioEngine, engine.isRunning,
-              let node = playerNode, node.isPlaying,
-              let format = audioFormat, !isMuted else { return }
+        guard !isMuted else { return }
 
         let noSamples = Int(frame.no_samples)
         let noChannels = Int(frame.no_channels)
-        guard let data = frame.p_data, noSamples > 0 else { return }
-              
-        // AGGRESSIVE MEMORY CLEANUP for Audio Buffers
+        let sampleRate = Int(frame.sample_rate)
+        guard let pData = frame.p_data, noSamples > 0, noChannels > 0, sampleRate > 0 else { return }
+
+        let sr = Double(sampleRate)
+
+        // Dynamically initialize or reconfigure audio engine if sample rate changes
+        if audioEngine == nil || audioFormat == nil || audioFormat?.sampleRate != sr {
+            setupAudioEngine(sampleRate: sr)
+        }
+
+        guard let engine = audioEngine,
+              let node = playerNode,
+              let format = audioFormat else { return }
+
+        if !engine.isRunning {
+            do {
+                try engine.start()
+            } catch {
+                return
+            }
+        }
+        if !node.isPlaying {
+            node.play()
+        }
+
         autoreleasepool {
             guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(noSamples)) else { return }
             pcmBuffer.frameLength = AVAudioFrameCount(noSamples)
-            
-            let stride = Int(frame.channel_stride_in_bytes)
-            let actualStride = (stride == 0) ? (noSamples * 4) : stride
-            
-            let maxDataSize = noSamples * noChannels * 4
-            if let floatChannels = pcmBuffer.floatChannelData {
-                for ch in 0..<min(noChannels, 2) {
-                    let dest = floatChannels[ch]
-                    let srcChannelData = data.advanced(by: ch * actualStride)
-                    // ­ƒøí´©Å Safety check to avoid out of bounds
-                    if (ch * actualStride) + (noSamples * 4) <= maxDataSize {
-                        memcpy(dest, srcChannelData, noSamples * 4)
-                    }
-                }
+
+            guard let floatChannels = pcmBuffer.floatChannelData else { return }
+
+            let strideBytes = Int(frame.channel_stride_in_bytes)
+            let strideFloats = (strideBytes > 0) ? (strideBytes / MemoryLayout<Float>.size) : noSamples
+
+            let leftDest = floatChannels[0]
+            let rightDest = floatChannels[1]
+
+            // Left channel (channel 0)
+            let leftSrc = pData.advanced(by: 0)
+            memcpy(leftDest, leftSrc, noSamples * MemoryLayout<Float>.size)
+
+            // Right channel
+            if noChannels >= 2 {
+                let rightSrc = pData.advanced(by: strideFloats)
+                memcpy(rightDest, rightSrc, noSamples * MemoryLayout<Float>.size)
+            } else {
+                // Mono source: duplicate left channel to right for balanced stereo output on iPhone
+                memcpy(rightDest, leftSrc, noSamples * MemoryLayout<Float>.size)
             }
-            node.scheduleBuffer(pcmBuffer, at: nil, options: .interruptsAtLoop, completionHandler: nil)
+
+            // Schedule buffer without interruption (continuous streaming playback)
+            node.scheduleBuffer(pcmBuffer, completionHandler: nil)
         }
     }
 
 
-    // ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+    // ─────────────────────────────────────────────────────────────
     // RECORDING LOGIC (OPTIMIZED 500k)
-    // ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+    // ─────────────────────────────────────────────────────────────
     private func startRecording() {
         let path = NSTemporaryDirectory() + "ndi_record.mp4"
         let url = URL(fileURLWithPath: path)
         try? FileManager.default.removeItem(at: url)
         do {
             assetWriter = try AVAssetWriter(outputURL: url, fileType: .mp4)
-            // R├ëGLAGES PRO BROADCAST (500 kbps) POUR STABILIT├ë MAXIMALE
+            // RÉGLAGES PRO BROADCAST (500 kbps) POUR STABILITÉ MAXIMALE
             let settings: [String: Any] = [
                 AVVideoCodecKey: AVVideoCodecType.h264,
-                AVVideoWidthKey: 960,  // R├®solution optimis├®e pour le monitoring
+                AVVideoWidthKey: 960,  // Résolution optimisée pour le monitoring
                 AVVideoHeightKey: 540,
                 AVVideoCompressionPropertiesKey: [
                     AVVideoAverageBitRateKey: 500000, // 500 kbps (Hard-limit)
@@ -342,9 +411,9 @@ class NDIView: NSObject, FlutterPlatformView {
                 assetWriter!.startSession(atSourceTime: .zero)
                 isRecording = true
                 startTime = nil
-                print("­ƒö┤ Recording Started (500kbps)")
+                print("🔴 Recording Started (500kbps)")
             }
-        } catch { print("ÔØî Record error: \(error)") }
+        } catch { print("❌ Record error: \(error)") }
     }
 
     private func stopRecording() {
@@ -355,7 +424,7 @@ class NDIView: NSObject, FlutterPlatformView {
             self.assetWriter?.finishWriting { [weak self] in
                 if let url = self?.assetWriter?.outputURL {
                     UISaveVideoAtPathToSavedPhotosAlbum(url.path, nil, nil, nil)
-                    print("Ô£à Record Saved @ 500kbps to Gallery")
+                    print("✅ Record Saved @ 500kbps to Gallery")
                 }
                 // Cleanup after writing is done
                 self?.assetWriter = nil
@@ -386,11 +455,13 @@ class NDIView: NSObject, FlutterPlatformView {
         if isRecording { stopRecording() }
         if let node = playerNode {
             node.stop()
-            NDIManager.shared.sharedAudioEngine.detach(node)
+            audioEngine?.stop()
+            audioEngine?.detach(node)
             playerNode = nil
+            audioEngine = nil
         }
         
-        // ­ƒøí´©Å CRITICAL FIX: Destroy NDI receiver on its own queue to avoid SIGABRT
+        // 🛡️ CRITICAL FIX: Destroy NDI receiver on its own queue to avoid SIGABRT
         let oldRecv = self.recvInstance
         self.recvInstance = nil
         receiveQueue.async {

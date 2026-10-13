@@ -172,6 +172,19 @@ class _OMTScreenState extends State<OMTScreen>
     }
   }
 
+  void _openFullscreen() {
+    if (_selectedSource == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (ctx) => OMTFullscreenPage(
+          source: _selectedSource!,
+          omtService: _omtService,
+          initialStats: _stats,
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _omtService.stopCameraPreview();
@@ -1041,13 +1054,52 @@ class _OMTScreenState extends State<OMTScreen>
                         ),
                       ),
                     ),
+
+                    // Fullscreen overlay button
+                    Positioned(
+                      bottom: 10,
+                      left: 10,
+                      child: Material(
+                        color: Colors.black.withOpacity(0.65),
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: _openFullscreen,
+                          child: const Padding(
+                            padding: EdgeInsets.all(8),
+                            child: Icon(Icons.fullscreen, color: Colors.cyanAccent, size: 22),
+                          ),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
             ),
           ),
 
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
+
+          // Fullscreen button
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: _openFullscreen,
+              icon: const Icon(Icons.fullscreen),
+              label: const Text(
+                'Mode Plein Écran (Paysage)',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.cyan.shade800,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 12),
 
           // Stop reception button
           SizedBox(
@@ -1068,7 +1120,7 @@ class _OMTScreenState extends State<OMTScreen>
             ),
           ),
 
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
 
           // Receiver-only diagnostics: available even after a TCP failure.
           SizedBox(
@@ -1117,6 +1169,11 @@ class _OMTScreenState extends State<OMTScreen>
                 _statsRow('Trames reçues', '${_stats['framesReceived'] ?? 0}'),
                 _statsRow('Trames décodées', '${_stats['framesDecoded'] ?? 0}'),
                 _statsRow('Trames perdues (drops)', '${_stats['framesDropped'] ?? 0}'),
+                _statsRow('Codec audio OMT', _stats['audioCodec']?.toString() ?? 'Non détecté'),
+                _statsRow('Format audio', _stats['audioSampleRate'] != null && (_stats['audioSampleRate'] as num) > 0
+                    ? '${_stats['audioSampleRate']} Hz • ${_stats['audioChannels'] ?? 2} ch'
+                    : 'Aucun flux audio'),
+                _statsRow('Trames audio reçues', '${_stats['audioFramesReceived'] ?? 0}'),
               ],
             ),
           ),
@@ -1329,3 +1386,312 @@ class _OMTScreenState extends State<OMTScreen>
     );
   }
 }
+
+/// Fullscreen landscape viewer for OMT video & audio streams.
+/// Automatically rotates to landscape, hides system status bars,
+/// preserves source aspect ratio, displays interactive HUD with live
+/// audio/video metrics, and cleanly restores portrait and system UI on exit.
+class OMTFullscreenPage extends StatefulWidget {
+  final OMTSource source;
+  final OMTService omtService;
+  final Map<String, dynamic> initialStats;
+
+  const OMTFullscreenPage({
+    super.key,
+    required this.source,
+    required this.omtService,
+    required this.initialStats,
+  });
+
+  @override
+  State<OMTFullscreenPage> createState() => _OMTFullscreenPageState();
+}
+
+class _OMTFullscreenPageState extends State<OMTFullscreenPage> {
+  late Map<String, dynamic> _stats;
+  StreamSubscription<Map<String, dynamic>>? _statsSub;
+  bool _showControls = true;
+  Timer? _hideTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _stats = Map<String, dynamic>.from(widget.initialStats);
+
+    // Lock to landscape orientations and immersive sticky mode
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
+    _statsSub = widget.omtService.statsStream.listen((data) {
+      if (mounted) {
+        setState(() {
+          _stats = data;
+        });
+      }
+    });
+
+    _startHideTimer();
+  }
+
+  void _startHideTimer() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) {
+        setState(() {
+          _showControls = false;
+        });
+      }
+    });
+  }
+
+  void _toggleControls() {
+    setState(() {
+      _showControls = !_showControls;
+    });
+    if (_showControls) {
+      _startHideTimer();
+    } else {
+      _hideTimer?.cancel();
+    }
+  }
+
+  void _restoreOrientation() {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    _statsSub?.cancel();
+    _restoreOrientation();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final actualW = (_stats['actualWidth'] as num?)?.toDouble() ?? 0.0;
+    final actualH = (_stats['actualHeight'] as num?)?.toDouble() ?? 0.0;
+    final double aspectRatio = (actualW > 0 && actualH > 0) ? (actualW / actualH) : (16 / 9);
+
+    final String codecStr = _stats['codec']?.toString() ?? 'VMX1';
+    final String fpsStr = _stats['fps']?.toString() ?? '0.0';
+    final String bitrateStr = '${_stats['bitrateKbps'] ?? 0} kbps';
+    final String resStr = (actualW > 0 && actualH > 0)
+        ? '${actualW.toInt()}x${actualH.toInt()}'
+        : 'Attente vidéo';
+
+    final int audioFrames = (_stats['audioFramesReceived'] as num?)?.toInt() ?? 0;
+    final String audioCodec = _stats['audioCodec']?.toString() ?? 'FPA1';
+    final int sampleRate = (_stats['audioSampleRate'] as num?)?.toInt() ?? 0;
+    final bool hasAudio = audioFrames > 0;
+
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, result) {
+        _restoreOrientation();
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _toggleControls,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // Centered video with aspect ratio preservation
+              Center(
+                child: AspectRatio(
+                  aspectRatio: aspectRatio,
+                  child: Theme.of(context).platform == TargetPlatform.iOS
+                      ? const UiKitView(
+                          viewType: 'com.antigravity/omt_receiver_view',
+                        )
+                      : const Center(
+                          child: Text(
+                            'Récepteur Vidéo OMT (iOS)',
+                            style: TextStyle(color: Colors.white38),
+                          ),
+                        ),
+                ),
+              ),
+
+              // Animated HUD Overlay
+              AnimatedOpacity(
+                opacity: _showControls ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 250),
+                child: IgnorePointer(
+                  ignoring: !_showControls,
+                  child: SafeArea(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        // Top Bar: Back button, Source name & Badges
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Colors.black.withOpacity(0.75),
+                                Colors.transparent,
+                              ],
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Material(
+                                color: Colors.black.withOpacity(0.5),
+                                shape: const CircleBorder(),
+                                child: InkWell(
+                                  customBorder: const CircleBorder(),
+                                  onTap: () {
+                                    _restoreOrientation();
+                                    Navigator.of(context).pop();
+                                  },
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(8),
+                                    child: Icon(Icons.arrow_back, color: Colors.white, size: 24),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      widget.source.name,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    Text(
+                                      '${widget.source.host}:${widget.source.port}',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              // Video badge
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: Colors.cyanAccent.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.cyanAccent.withOpacity(0.5)),
+                                ),
+                                child: Text(
+                                  '$resStr • $codecStr',
+                                  style: const TextStyle(
+                                    color: Colors.cyanAccent,
+                                    fontSize: 12,
+                                    fontFamily: 'monospace',
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              // Audio badge
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: hasAudio
+                                      ? Colors.greenAccent.withOpacity(0.2)
+                                      : Colors.white.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: hasAudio
+                                        ? Colors.greenAccent.withOpacity(0.5)
+                                        : Colors.white24,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      hasAudio ? Icons.volume_up : Icons.volume_off,
+                                      size: 14,
+                                      color: hasAudio ? Colors.greenAccent : Colors.white38,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      hasAudio
+                                          ? '$audioCodec ${sampleRate ~/ 1000}k'
+                                          : 'Muet',
+                                      style: TextStyle(
+                                        color: hasAudio ? Colors.greenAccent : Colors.white38,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // Bottom Bar: Telemetry pills
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.bottomCenter,
+                              end: Alignment.topCenter,
+                              colors: [
+                                Colors.black.withOpacity(0.75),
+                                Colors.transparent,
+                              ],
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.6),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.white24),
+                                ),
+                                child: Text(
+                                  '$fpsStr FPS • $bitrateStr',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontFamily: 'monospace',
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+

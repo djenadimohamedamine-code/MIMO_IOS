@@ -2,11 +2,13 @@ import Foundation
 import Network
 import CoreGraphics
 import UIKit
+import AVFoundation
 
-/// High-performance Open Media Transport (OMT) video receiver for iOS.
+/// High-performance Open Media Transport (OMT) video and audio receiver for iOS.
 /// Connects to an OMT source (such as vMix 29) over TCP, negotiates subscription
-/// with <OMTSubscribe Video="true" />, defragments incoming TCP frames,
+/// with <OMTSubscribe Video="true" /> and <OMTSubscribe Audio="true" />, defragments incoming TCP frames,
 /// decodes VMX1 compressed video using libvmx (ARM NEON) into BGRA,
+/// plays back FPA1 planar 32-bit floating-point audio with low-latency via AVAudioEngine,
 /// and produces CGImage frames for real-time rendering at 30-60 FPS.
 class OMTReceiver {
     
@@ -30,6 +32,12 @@ class OMTReceiver {
     private var receiveBuffer = Data()
     private var parsedFrameCount = 0
     
+    // Audio Player & Receiver (matching libomtnet dual-connection architecture)
+    private var audioConnection: NWConnection?
+    private let audioReceiveQueue = DispatchQueue(label: "com.antigravity.omt.receiver.audio", qos: .userInteractive)
+    private var audioReceiveBuffer = Data()
+    private var audioPlayer: OMTAudioPlayer?
+    
     // Callbacks
     var onFrameDecoded: ((CGImage, Int32, Int32) -> Void)?
     var onStateChanged: ((OMTManager.State) -> Void)?
@@ -47,6 +55,12 @@ class OMTReceiver {
     private(set) var codecName: String = "VMX1"
     private(set) var currentFps: Double = 0.0
     private(set) var currentBitrateKbps: Double = 0.0
+    
+    // Audio Telemetry
+    private(set) var audioFramesReceived: Int64 = 0
+    private(set) var audioSampleRate: Int32 = 0
+    private(set) var audioChannels: Int32 = 0
+    private(set) var audioCodecName: String = "FPA1"
     
     private var lastStatTime = Date()
     private var bytesSinceLastStat: Int64 = 0
@@ -79,6 +93,12 @@ class OMTReceiver {
         bytesSinceLastStat = 0
         framesSinceLastStat = 0
         lastStatTime = Date()
+        
+        audioFramesReceived = 0
+        audioSampleRate = 0
+        audioChannels = 0
+        audioReceiveBuffer.removeAll(keepingCapacity: true)
+        audioPlayer = OMTAudioPlayer()
         
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
             onError?("Port invalide: \(port)")
@@ -141,6 +161,17 @@ class OMTReceiver {
         
         conn.start(queue: receiveQueue)
         NSLog("[OMTReceiver] Connecting to %@:%d...", host, port)
+        
+        // Start dedicated audio connection (dual-socket architecture matching libomtnet)
+        let audioTcpOptions = NWProtocolTCP.Options()
+        audioTcpOptions.noDelay = true
+        audioTcpOptions.enableKeepalive = true
+        audioTcpOptions.keepaliveIdle = 5
+        audioTcpOptions.keepaliveInterval = 5
+        audioTcpOptions.keepaliveCount = 3
+        let audioParams = NWParameters(tls: nil, tcp: audioTcpOptions)
+        audioParams.prohibitExpensivePaths = false
+        self.startAudioConnection(endpoint: endpoint, params: audioParams)
     }
     
     func stop() {
@@ -149,6 +180,13 @@ class OMTReceiver {
         
         connection?.cancel()
         connection = nil
+        
+        audioConnection?.cancel()
+        audioConnection = nil
+        audioReceiveBuffer.removeAll(keepingCapacity: false)
+        
+        audioPlayer?.stop()
+        audioPlayer = nil
         
         vmxBridge?.destroy()
         vmxBridge = nil
@@ -282,6 +320,8 @@ class OMTReceiver {
                 handleVideoPayload(payload)
             } else if frameType == OMTFrameType.metadata.rawValue {
                 handleMetadataPayload(payload)
+            } else if frameType == OMTFrameType.audio.rawValue {
+                handleAudioPayload(payload)
             }
         }
         
@@ -513,6 +553,149 @@ class OMTReceiver {
         }
     }
     
+    // MARK: - Audio TCP Reception & Subscription
+    
+    private func startAudioConnection(endpoint: NWEndpoint, params: NWParameters) {
+        let conn = NWConnection(to: endpoint, using: params)
+        self.audioConnection = conn
+        
+        conn.stateUpdateHandler = { [weak self] newState in
+            guard let self = self else { return }
+            NSLog("[OMTReceiver][AudioTCP] %@:%d state=%@", self.host, self.port, String(describing: newState))
+            switch newState {
+            case .ready:
+                NSLog("[OMTReceiver][AudioTCP] Audio socket connected to %@:%d", self.host, self.port)
+                self.sendAudioSubscription()
+                self.scheduleAudioReceive()
+                
+            case .failed(let error):
+                // If remote source (e.g. Desktop Capture) doesn't accept a 2nd connection or has no audio,
+                // quietly close without failing or interrupting the video stream.
+                NSLog("[OMTReceiver][AudioTCP] Audio socket failed: %@ (video unaffected)", error.localizedDescription)
+                self.onDiagnostic?("Audio TCP socket failed: \(error.localizedDescription) (video unaffected)")
+                self.audioConnection?.cancel()
+                self.audioConnection = nil
+                
+            case .cancelled:
+                NSLog("[OMTReceiver][AudioTCP] Audio socket cancelled")
+                
+            default:
+                break
+            }
+        }
+        
+        conn.start(queue: audioReceiveQueue)
+    }
+    
+    private func sendAudioSubscription() {
+        guard let conn = audioConnection else { return }
+        
+        // Match libomtnet dual-connection subscription (OMTReceive.cs lines 364-373):
+        var audioHandshake = Data()
+        let metaSub = OMTFrameBuilder.buildMetadataFrame(xmlString: OMTMetadataCommand.subscribeMetadata)
+        let audioSub = OMTFrameBuilder.buildMetadataFrame(xmlString: OMTMetadataCommand.subscribeAudio)
+        audioHandshake.append(metaSub)
+        audioHandshake.append(audioSub)
+        
+        conn.send(content: audioHandshake, completion: .contentProcessed { [weak self] error in
+            if let error = error {
+                NSLog("[OMTReceiver][AudioTCP] Failed to send audio subscription: %@", error.localizedDescription)
+            } else {
+                NSLog("[OMTReceiver][AudioTCP] OMT audio subscription sent (%d bytes)", audioHandshake.count)
+                self?.onDiagnostic?("OMT audio subscription sent (\(audioHandshake.count) bytes)")
+            }
+        })
+    }
+    
+    private func scheduleAudioReceive() {
+        guard let conn = audioConnection, isRunning else { return }
+        
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] content, context, isComplete, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                NSLog("[OMTReceiver][AudioTCP] Audio receive error: %@ (video unaffected)", error.localizedDescription)
+                self.audioConnection?.cancel()
+                self.audioConnection = nil
+                return
+            }
+            
+            if let data = content, !data.isEmpty {
+                self.processIncomingAudioBytes(data)
+            }
+            
+            if isComplete {
+                NSLog("[OMTReceiver][AudioTCP] Remote closed audio socket (video unaffected)")
+                self.audioConnection?.cancel()
+                self.audioConnection = nil
+                return
+            }
+            
+            if self.isRunning && self.audioConnection != nil {
+                self.scheduleAudioReceive()
+            }
+        }
+    }
+    
+    private func processIncomingAudioBytes(_ chunk: Data) {
+        audioReceiveBuffer.append(chunk)
+        
+        while audioReceiveBuffer.count >= 16 {
+            let frameType = audioReceiveBuffer[1]
+            let dataLen = audioReceiveBuffer.readLEInt32(offset: 12)
+            
+            guard dataLen >= 0 && dataLen <= 10_000_000 else {
+                NSLog("[OMTReceiver][AudioTCP] Desync: invalid dataLen %d, skipping 1 byte", dataLen)
+                audioReceiveBuffer.remove(at: 0)
+                continue
+            }
+            
+            let totalFrameLength = 16 + Int(dataLen)
+            if audioReceiveBuffer.count < totalFrameLength {
+                break
+            }
+            
+            let payload = audioReceiveBuffer.subdata(in: 16..<totalFrameLength)
+            audioReceiveBuffer.removeSubrange(0..<totalFrameLength)
+            
+            if frameType == OMTFrameType.audio.rawValue {
+                handleAudioPayload(payload)
+            } else if frameType == OMTFrameType.metadata.rawValue {
+                handleMetadataPayload(payload)
+            } else if frameType == OMTFrameType.video.rawValue {
+                handleVideoPayload(payload)
+            }
+        }
+    }
+    
+    private func handleAudioPayload(_ payload: Data) {
+        audioFramesReceived += 1
+        guard payload.count >= 24 else { return }
+        guard let audioHdr = OMTAudioHeader(from: payload) else { return }
+        
+        self.audioSampleRate = audioHdr.sampleRate
+        self.audioChannels = audioHdr.channels
+        if audioHdr.codec == OMTAudioCodec.fpa1 {
+            self.audioCodecName = "FPA1"
+        } else {
+            self.audioCodecName = String(format: "0x%08X", audioHdr.codec)
+        }
+        
+        if audioFramesReceived == 1 {
+            NSLog("[OMTReceiver] First OMT audio frame: %d Hz, %d ch, codec=%@", audioHdr.sampleRate, audioHdr.channels, self.audioCodecName)
+            onDiagnostic?("First OMT audio frame: \(audioHdr.sampleRate) Hz, \(audioHdr.channels) ch, mask=0x\(String(audioHdr.activeChannels, radix: 16))")
+        }
+        
+        let audioData = payload.subdata(in: 24..<payload.count)
+        audioPlayer?.playAudioFrame(
+            sampleRate: audioHdr.sampleRate,
+            channels: audioHdr.channels,
+            samplesPerChannel: audioHdr.samplesPerChannel,
+            activeChannelsMask: audioHdr.activeChannels,
+            audioData: audioData
+        )
+    }
+    
     func getStatsDict() -> [String: Any] {
         return [
             "isReceiver": true,
@@ -528,7 +711,151 @@ class OMTReceiver {
             "framesReceived": framesReceived,
             "framesDropped": framesDropped,
             "bytesReceived": bytesReceived,
+            "audioFramesReceived": audioFramesReceived,
+            "audioSampleRate": audioSampleRate,
+            "audioChannels": audioChannels,
+            "audioCodec": audioCodecName,
             "state": isRunning ? "receiving" : "idle"
         ]
+    }
+}
+
+// MARK: - OMTAudioPlayer
+
+/// Real-time low-latency audio player for OMT streams using AVAudioEngine.
+/// Decodes FPA1 planar 32-bit floating-point PCM audio (matching official libomtnet specification).
+/// Handles arbitrary active channel bitmasks, filling silent channels with zeros,
+/// and streaming non-interleaved float32 buffers directly to the iOS audio hardware.
+class OMTAudioPlayer {
+    private let audioEngine = AVAudioEngine()
+    private let playerNode = AVAudioPlayerNode()
+    private var currentFormat: AVAudioFormat?
+    private let audioQueue = DispatchQueue(label: "com.antigravity.omt.audioplayer", qos: .userInteractive)
+    
+    init() {
+        audioQueue.async { [weak self] in
+            self?.setupEngine()
+        }
+    }
+    
+    private func setupEngine() {
+        audioEngine.attach(playerNode)
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth])
+            try? session.overrideOutputAudioPort(.speaker)
+            try session.setActive(true)
+        } catch {
+            NSLog("[OMTAudioPlayer] AVAudioSession warning: %@", error.localizedDescription)
+        }
+    }
+    
+    func playAudioFrame(
+        sampleRate: Int32,
+        channels: Int32,
+        samplesPerChannel: Int32,
+        activeChannelsMask: UInt32,
+        audioData: Data
+    ) {
+        audioQueue.async { [weak self] in
+            guard let self = self else { return }
+            guard sampleRate >= 8000 && sampleRate <= 192000,
+                  channels >= 1 && channels <= 16,
+                  samplesPerChannel > 0 && samplesPerChannel <= 48000 else {
+                return
+            }
+            
+            let sr = Double(sampleRate)
+            let chCount = AVAudioChannelCount(channels)
+            
+            // Reconfigure engine graph if format parameters change
+            if self.currentFormat == nil ||
+               self.currentFormat?.sampleRate != sr ||
+               self.currentFormat?.channelCount != chCount {
+                self.reconfigure(sampleRate: sr, channels: chCount)
+            }
+            
+            guard let format = self.currentFormat,
+                  let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samplesPerChannel)) else {
+                return
+            }
+            pcmBuffer.frameLength = AVAudioFrameCount(samplesPerChannel)
+            
+            guard let floatChannelData = pcmBuffer.floatChannelData else { return }
+            
+            let channelByteCount = Int(samplesPerChannel) * MemoryLayout<Float>.size
+            var dataOffset = 0
+            
+            for ch in 0..<Int(channels) {
+                let channelPtr = floatChannelData[ch]
+                let isActive = (activeChannelsMask & (UInt32(1) << ch)) != 0
+                
+                if isActive && (dataOffset + channelByteCount <= audioData.count) {
+                    audioData.withUnsafeBytes { rawPtr in
+                        if let src = rawPtr.baseAddress?.advanced(by: dataOffset) {
+                            channelPtr.update(from: src.assumingMemoryBound(to: Float.self), count: Int(samplesPerChannel))
+                        }
+                    }
+                    dataOffset += channelByteCount
+                } else {
+                    // Muted or silent channel: zero fill
+                    memset(channelPtr, 0, channelByteCount)
+                }
+            }
+            
+            if !self.audioEngine.isRunning {
+                do {
+                    try self.audioEngine.start()
+                } catch {
+                    NSLog("[OMTAudioPlayer] Failed to start AVAudioEngine: %@", error.localizedDescription)
+                    return
+                }
+            }
+            
+            if !self.playerNode.isPlaying {
+                self.playerNode.play()
+            }
+            
+            self.playerNode.scheduleBuffer(pcmBuffer, completionHandler: nil)
+        }
+    }
+    
+    private func reconfigure(sampleRate: Double, channels: AVAudioChannelCount) {
+        playerNode.stop()
+        audioEngine.stop()
+        
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sampleRate,
+            channels: channels,
+            interleaved: false
+        ) else { return }
+        
+        self.currentFormat = format
+        audioEngine.disconnectNodeOutput(playerNode)
+        audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: format)
+        
+        do {
+            try audioEngine.start()
+            playerNode.play()
+            NSLog("[OMTAudioPlayer] Reconfigured for %.0f Hz, %d channels", sampleRate, channels)
+        } catch {
+            NSLog("[OMTAudioPlayer] Engine start error: %@", error.localizedDescription)
+        }
+    }
+    
+    func stop() {
+        audioQueue.sync {
+            playerNode.stop()
+            audioEngine.stop()
+            audioEngine.disconnectNodeOutput(playerNode)
+            currentFormat = nil
+        }
+    }
+    
+    deinit {
+        playerNode.stop()
+        audioEngine.stop()
+        audioEngine.detach(playerNode)
     }
 }

@@ -2,6 +2,7 @@ import Foundation
 import Network
 import UIKit
 import Darwin
+import CoreVideo
 
 /// Manages TCP connections to OMT receivers (e.g., vMix 29).
 /// Implements full OMT 1.0 protocol specification:
@@ -244,6 +245,85 @@ class OMTSender {
             let encoded = encoder.encode(uyvyData: pixelData, width: frameW, height: frameH)
             
             // Build binary OMT Video Frame
+            let frameData = OMTFrameBuilder.buildVideoFrame(
+                payloadData: encoded.data,
+                codec: encoded.codec,
+                width: self.currentWidth,
+                height: self.currentHeight,
+                frameRateN: self.frameRateN,
+                frameRateD: self.frameRateD,
+                flags: OMTVideoFlags.none,
+                colorSpace: OMTColorSpace.bt709
+            )
+            
+            let frameByteCount = Int64(frameData.count)
+            self.broadcastFrameData(frameData: frameData, frameByteCount: frameByteCount, sessions: availableSessions)
+        }
+    }
+    
+    /// High-performance zero-copy CVPixelBuffer frame transmission using native ARM NEON VMX_EncodeNV12.
+    /// Retains the CVPixelBuffer across the async queue dispatch and locks its planes only during encoding.
+    func sendPixelBuffer(_ pixelBuffer: CVPixelBuffer, width: Int32? = nil, height: Int32? = nil) {
+        pendingFrameLock.lock()
+        guard !hasPendingFrame else {
+            pendingFrameLock.unlock()
+            return
+        }
+        hasPendingFrame = true
+        pendingFrameLock.unlock()
+
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            defer {
+                self.pendingFrameLock.lock()
+                self.hasPendingFrame = false
+                self.pendingFrameLock.unlock()
+            }
+            
+            let subscribedSessions = self.sessions.values.filter { $0.isSubscribedToVideo }
+            guard !subscribedSessions.isEmpty else {
+                return
+            }
+            
+            let availableSessions = subscribedSessions.filter { !$0.isSending }
+            guard !availableSessions.isEmpty else {
+                self.framesDroppedTotal += 1
+                return
+            }
+
+            let frameW = width ?? Int32(CVPixelBufferGetWidth(pixelBuffer))
+            let frameH = height ?? Int32(CVPixelBufferGetHeight(pixelBuffer))
+            if frameW != self.currentWidth || frameH != self.currentHeight {
+                self.currentWidth = frameW
+                self.currentHeight = frameH
+            }
+            
+            guard let encoder = self.videoEncoder else { return }
+            
+            CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+            
+            guard let yPlane = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0),
+                  let uvPlane = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1) else {
+                self.framesDroppedTotal += 1
+                return
+            }
+            
+            let strideY = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+            let strideUV = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
+            
+            guard let encoded = encoder.encodeNV12(
+                yPlane: yPlane.assumingMemoryBound(to: UInt8.self),
+                strideY: strideY,
+                uvPlane: uvPlane.assumingMemoryBound(to: UInt8.self),
+                strideUV: strideUV,
+                width: frameW,
+                height: frameH
+            ) else {
+                self.framesDroppedTotal += 1
+                return
+            }
+            
             let frameData = OMTFrameBuilder.buildVideoFrame(
                 payloadData: encoded.data,
                 codec: encoded.codec,

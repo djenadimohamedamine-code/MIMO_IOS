@@ -23,6 +23,40 @@ struct OMTVideoCodec {
     static let uyvy: Int32 = 0x59565955
 }
 
+/// OMT Audio Codec FourCC (Little-Endian)
+struct OMTAudioCodec {
+    /// 'FPA1' — 32-bit floating point planar audio (official OMT audio codec)
+    /// ('F' | ('P' << 8) | ('A' << 16) | ('1' << 24)) = 0x31415046
+    static let fpa1: Int32 = 0x31415046
+}
+
+/// OMT Audio Extended Header (24 bytes, Little-Endian)
+/// Layout matching libomtnet:
+/// [0..3]:   Codec FourCC (Int32 LE, e.g. 0x31415046 'FPA1')
+/// [4..7]:   SampleRate (Int32 LE, e.g. 48000)
+/// [8..11]:  SamplesPerChannel (Int32 LE, e.g. 1024)
+/// [12..15]: Channels (Int32 LE, e.g. 2)
+/// [16..19]: ActiveChannels (UInt32 LE bitmask: 1 << channelIndex)
+/// [20..23]: Reserved1 (Int32 LE, 0)
+struct OMTAudioHeader {
+    let codec: Int32
+    let sampleRate: Int32
+    let samplesPerChannel: Int32
+    let channels: Int32
+    let activeChannels: UInt32
+    let reserved1: Int32
+    
+    init?(from data: Data) {
+        guard data.count >= 24 else { return nil }
+        self.codec = data.readLEInt32(offset: 0)
+        self.sampleRate = data.readLEInt32(offset: 4)
+        self.samplesPerChannel = data.readLEInt32(offset: 8)
+        self.channels = data.readLEInt32(offset: 12)
+        self.activeChannels = UInt32(bitPattern: data.readLEInt32(offset: 16))
+        self.reserved1 = data.readLEInt32(offset: 20)
+    }
+}
+
 /// OMT Color Space
 struct OMTColorSpace {
     static let undefined: Int32 = 0

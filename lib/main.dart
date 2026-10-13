@@ -731,9 +731,12 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
                     child: Icon(_isRecording ? Icons.stop : Icons.videocam, color: Colors.white, size: 28),
                   ),
                 ),
-                // ­ƒöè Bouton Mute
+                // 🔊 Bouton Mute
                 GestureDetector(
-                  onTap: () => setState(() => _isMuted = !_isMuted),
+                  onTap: () {
+                    setState(() => _isMuted = !_isMuted);
+                    _viewChannel?.invokeMethod('setMuted', _isMuted);
+                  },
                   child: Container(
                     padding: const EdgeInsets.all(10),
                     margin: const EdgeInsets.only(bottom: 12),
