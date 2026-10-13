@@ -206,6 +206,14 @@ class OMTSender {
                 return
             }
             
+            // Avoid expensive VMX1 encoding when every subscribed TCP session is busy.
+            // The send loop below still applies per-session backpressure.
+            let availableSessions = subscribedSessions.filter { !$0.isSending }
+            guard !availableSessions.isEmpty else {
+                self.framesDroppedTotal += 1
+                return
+            }
+
             let frameW = width ?? self.currentWidth
             let frameH = height ?? self.currentHeight
             if frameW != self.currentWidth || frameH != self.currentHeight {
@@ -230,7 +238,7 @@ class OMTSender {
             )
             
             let frameByteCount = Int64(frameData.count)
-            self.broadcastFrameData(frameData: frameData, frameByteCount: frameByteCount, sessions: subscribedSessions)
+            self.broadcastFrameData(frameData: frameData, frameByteCount: frameByteCount, sessions: availableSessions)
         }
     }
     
