@@ -941,7 +941,7 @@ class _OMTScreenState extends State<OMTScreen>
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      isReceiving ? 'EN DIRECT' : 'CONNEXION...',
+                      isReceiving ? 'EN DIRECT' : (_connectionState == OMTConnectionState.error ? 'ERREUR TCP' : 'CONNEXION...'),
                       style: TextStyle(
                         color: isReceiving ? Colors.cyanAccent : Colors.orangeAccent,
                         fontSize: 11,
@@ -977,7 +977,7 @@ class _OMTScreenState extends State<OMTScreen>
                             ),
                           ),
 
-                    if (!isReceiving)
+                    if (!isReceiving && _connectionState != OMTConnectionState.error)
                       Container(
                         color: Colors.black.withOpacity(0.75),
                         child: Center(
@@ -1069,6 +1069,18 @@ class _OMTScreenState extends State<OMTScreen>
           ),
 
           const SizedBox(height: 20),
+
+          // Receiver-only diagnostics: available even after a TCP failure.
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _copyDiagnosticLogs,
+              icon: const Icon(Icons.copy),
+              label: const Text('Copier les diagnostics de réception OMT'),
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.amberAccent),
+            ),
+          ),
+          const SizedBox(height: 12),
 
           // Receiver telemetry details
           Container(
