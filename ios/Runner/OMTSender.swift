@@ -289,14 +289,17 @@ class OMTSender {
     private func handleNewConnection(_ connection: NWConnection) {
         let session = ClientSession(connection: connection)
         let id = session.id
-        
+        NSLog("[OMTSender][TCP] Accepted inbound connection from %@", session.remoteEndpoint)
+
         connection.stateUpdateHandler = { [weak self, weak session] newState in
             guard let self = self, let session = session else { return }
+            NSLog("[OMTSender][TCP] Connection %@ state: %@", session.remoteEndpoint, String(describing: newState))
             switch newState {
             case .ready:
                 NSLog("[OMTSender] Receiver connected from %@", session.remoteEndpoint)
                 self.queue.async {
                     self.sessions[id] = session
+                    NSLog("[OMTSender][TCP] Registered %@, active sessions: %d", session.remoteEndpoint, self.sessions.count)
                     self.onConnectionCountChanged?(self.sessions.count)
                     self.updateSenderState()
                     // Send official OMT source identity metadata (<OMTInfo ... />)
@@ -306,12 +309,12 @@ class OMTSender {
             case .failed(let error):
                 NSLog("[OMTSender] Connection failed for %@: %@", session.remoteEndpoint, error.localizedDescription)
                 self.queue.async {
-                    self.removeSession(id: id)
+                    self.removeSession(id: id, reason: "connection failed: \(error.localizedDescription)")
                 }
-                
+
             case .cancelled:
                 self.queue.async {
-                    self.removeSession(id: id)
+                    self.removeSession(id: id, reason: "connection cancelled")
                 }
                 
             default:
@@ -362,12 +365,12 @@ class OMTSender {
             
             if let error = error {
                 NSLog("[OMTSender] Receive error from %@: %@", session.remoteEndpoint, error.localizedDescription)
-                self.queue.async { self.removeSession(id: session.id) }
+                self.queue.async { self.removeSession(id: session.id, reason: "receive error: \(error.localizedDescription)") }
                 return
             }
             if isComplete {
                 NSLog("[OMTSender] Receiver %@ closed connection", session.remoteEndpoint)
-                self.queue.async { self.removeSession(id: session.id) }
+                self.queue.async { self.removeSession(id: session.id, reason: "TCP receive complete") }
                 return
             }
             
@@ -472,10 +475,13 @@ class OMTSender {
         handleCommand(cmd, session: session)
     }
     
-    private func removeSession(id: ObjectIdentifier) {
-        guard let session = sessions.removeValue(forKey: id) else { return }
+    private func removeSession(id: ObjectIdentifier, reason: String = "send failure") {
+        guard let session = sessions.removeValue(forKey: id) else {
+            NSLog("[OMTSender][TCP] Removal requested for unregistered session (%@)", reason)
+            return
+        }
         session.connection.cancel()
-        NSLog("[OMTSender] Removed connection %@. Remaining: %d", session.remoteEndpoint, sessions.count)
+        NSLog("[OMTSender][TCP] Removed %@. Reason: %@. Remaining: %d", session.remoteEndpoint, reason, sessions.count)
         
         onConnectionCountChanged?(sessions.count)
         onSubscribedCountChanged?(subscribedConnectionCount)
