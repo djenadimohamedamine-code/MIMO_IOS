@@ -75,6 +75,9 @@ class OMTSender {
                                       qos: .userInteractive)
     private var netServicePublisher: NetServicePublisher?
     private var videoEncoder: OMTVideoEncoder?
+    // Bound camera-frame submissions before they enter the serial encoder queue.
+    private let pendingFrameLock = NSLock()
+    private var hasPendingFrame = false
     
     private(set) var state: OMTSenderState = .idle
     private(set) var framesSentTotal: Int64 = 0
@@ -197,8 +200,23 @@ class OMTSender {
     /// Send a video frame to all subscribed receivers (vMix 29).
     /// Does NOT send to connections that have not subscribed yet.
     func sendVideoFrame(pixelData: Data, width: Int32? = nil, height: Int32? = nil) {
+        // Reject frames at the capture boundary instead of retaining large Data
+        // buffers in an unbounded backlog of queue.async closures.
+        pendingFrameLock.lock()
+        guard !hasPendingFrame else {
+            pendingFrameLock.unlock()
+            return
+        }
+        hasPendingFrame = true
+        pendingFrameLock.unlock()
+
         queue.async { [weak self] in
             guard let self = self else { return }
+            defer {
+                self.pendingFrameLock.lock()
+                self.hasPendingFrame = false
+                self.pendingFrameLock.unlock()
+            }
             
             let subscribedSessions = self.sessions.values.filter { $0.isSubscribedToVideo }
             guard !subscribedSessions.isEmpty else {
