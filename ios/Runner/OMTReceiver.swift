@@ -96,6 +96,10 @@ class OMTReceiver {
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(cleanHost), port: nwPort)
         let tcpOptions = NWProtocolTCP.Options()
         tcpOptions.noDelay = true // Disable Nagle's algorithm for low-latency broadcast
+        tcpOptions.enableKeepalive = true
+        tcpOptions.keepaliveIdle = 5
+        tcpOptions.keepaliveInterval = 5
+        tcpOptions.keepaliveCount = 3
         
         let params = NWParameters(tls: nil, tcp: tcpOptions)
         params.prohibitExpensivePaths = false
@@ -160,17 +164,31 @@ class OMTReceiver {
     private func sendSubscription() {
         guard let conn = connection else { return }
         
-        // Build official OMT subscription metadata frame: <OMTSubscribe Video="true" />\0
-        let subscribeXml = OMTMetadataCommand.subscribeVideo
-        let frameData = OMTFrameBuilder.buildMetadataFrame(xmlString: subscribeXml)
+        // Build official libomtnet handshake sequence (OMTReceive.cs lines 424-434):
+        // 1. <OMTSubscribe Metadata="true" />  (subscribes to metadata channel)
+        // 2. <OMTSubscribe Video="true" />     (subscribes to video stream)
+        // 3. <OMTSettings Quality="Default" /> (suggested encoding quality)
+        // 4. <OMTTally Preview="true" Program=="true" /> (signals active viewer tally)
+        var handshakeData = Data()
         
-        conn.send(content: frameData, completion: .contentProcessed { [weak self] error in
+        let metaSub = OMTFrameBuilder.buildMetadataFrame(xmlString: OMTMetadataCommand.subscribeMetadata)
+        let videoSub = OMTFrameBuilder.buildMetadataFrame(xmlString: OMTMetadataCommand.subscribeVideo)
+        let qualitySet = OMTFrameBuilder.buildMetadataFrame(xmlString: OMTMetadataCommand.qualityDefault)
+        let tallySet = OMTFrameBuilder.buildMetadataFrame(xmlString: OMTMetadataCommand.tallyPreviewProgram)
+        
+        handshakeData.append(metaSub)
+        handshakeData.append(videoSub)
+        handshakeData.append(qualitySet)
+        handshakeData.append(tallySet)
+        
+        conn.send(content: handshakeData, completion: .contentProcessed { [weak self] error in
             if let error = error {
-                NSLog("[OMTReceiver] Failed to send subscription (%d bytes): %@", frameData.count, String(describing: error))
+                NSLog("[OMTReceiver] Failed to send handshake (%d bytes): %@", handshakeData.count, String(describing: error))
                 self?.onError?("Abonnement vidéo échoué: \(error.localizedDescription)")
             } else {
-                NSLog("[OMTReceiver] Subscription sent (%d bytes): %@", frameData.count, subscribeXml)
-                self?.onDiagnostic?("OMTSubscribe sent: \(frameData.count) bytes")
+                NSLog("[OMTReceiver] Full OMT handshake sent (%d bytes): MetaSub(%d), VideoSub(%d), Quality(%d), Tally(%d)",
+                      handshakeData.count, metaSub.count, videoSub.count, qualitySet.count, tallySet.count)
+                self?.onDiagnostic?("OMT handshake sent (\(handshakeData.count) bytes: meta(\(metaSub.count))+video(\(videoSub.count))+quality(\(qualitySet.count))+tally(\(tallySet.count)))")
             }
         })
     }

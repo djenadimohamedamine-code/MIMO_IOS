@@ -49,6 +49,7 @@ struct OMTMetadataCommand {
     static let subscribeMetadata = "<OMTSubscribe Metadata=\"true\" />"
     static let previewOn = "<OMTSettings Preview=\"true\" />"
     static let previewOff = "<OMTSettings Preview=\"false\" />"
+    static let qualityDefault = "<OMTSettings Quality=\"Default\" />"
     
     // NB: Double == typo is in official libomtnet specification for backwards compatibility
     static let tallyPreview = "<OMTTally Preview=\"true\" Program==\"false\" />"
@@ -133,20 +134,26 @@ class OMTFrameBuilder {
     
     // MARK: - Metadata Frame
     
-    /// Build an OMT metadata frame (XML UTF-8 payload with mandatory null terminator)
-    static func buildMetadataFrame(xmlString: String) -> Data {
-        guard var xmlData = xmlString.data(using: .utf8) else { return Data() }
-        xmlData.append(0) // Null terminator required by OMT protocol specification
+    /// Build an OMT metadata frame (XML UTF-8 payload, without null terminator)
+    /// Conforms to official libomtnet specification (OMTChannel.cs / OMTFrame.cs):
+    /// - Version: 1 (BYTE)
+    /// - FrameType: 1 (BYTE, Metadata)
+    /// - Timestamp: 0 (INT64 LE)
+    /// - MetadataLength: 0 (UINT16 LE, per-frame metadata length is 0 for standalone metadata frames)
+    /// - DataLength: length of UTF-8 XML in bytes (INT32 LE)
+    /// - Data: raw UTF-8 XML bytes (exact string match without \0)
+    static func buildMetadataFrame(xmlString: String, timestamp: Int64 = 0) -> Data {
+        guard let xmlData = xmlString.data(using: .utf8) else { return Data() }
         
-        let metadataLength = UInt16(xmlData.count)
+        let metadataLength: UInt16 = 0
         let totalDataLength = Int32(xmlData.count)
-        let timestamp = makeTimestamp()
         
         var frame = Data()
+        frame.reserveCapacity(16 + xmlData.count)
         frame.appendByte(kProtocolVersion)                      // Version BYTE (1)
         frame.appendByte(OMTFrameType.metadata.rawValue)        // FrameType BYTE (1)
-        frame.appendLE(timestamp)                               // Timestamp INT64
-        frame.appendLE(metadataLength)                          // MetadataLength UINT16
+        frame.appendLE(timestamp)                               // Timestamp INT64 (0)
+        frame.appendLE(metadataLength)                          // MetadataLength UINT16 (0)
         frame.appendLE(totalDataLength)                         // DataLength INT32
         frame.append(xmlData)
         

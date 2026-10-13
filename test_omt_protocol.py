@@ -17,8 +17,8 @@ def build_metadata_frame(xml_str):
     version = 1
     frame_type = 1  # Metadata
     timestamp = 0
-    xml_bytes = xml_str.encode('utf-8') + b'\x00'  # Mandatory null terminator
-    meta_len = len(xml_bytes)
+    xml_bytes = xml_str.encode('utf-8')  # Official libomtnet: raw UTF-8 string without null terminator
+    meta_len = 0  # MetadataLength is 0 for standalone metadata frames
     data_len = len(xml_bytes)
     main_hdr = struct.pack('<BBqhI', version, frame_type, timestamp, meta_len, data_len)
     return main_hdr + xml_bytes
@@ -38,29 +38,38 @@ def run_tests():
     assert codec_int == 0x31584D56, f"Expected 0x31584D56, got {hex(codec_int)}"
     print(f"[PASS] Test 2: Codec FourCC is Little-Endian VMX1 (0x{codec_int:08X} = '{codec_raw.decode()}')")
 
-    # Test 3: Metadata Frame with OMTInfo and null termination
+    # Test 3: Metadata Frame with OMTInfo (libomtnet standard layout)
     omt_info = '<OMTInfo ProductName="MIMO_NDI" Manufacturer="MIMO" Version="1.0" />'
     meta_frame = build_metadata_frame(omt_info)
-    assert meta_frame[-1] == 0, "Null terminator missing!"
-    expected_meta_len = len(omt_info) + 1
+    expected_data_len = len(omt_info.encode('utf-8'))
     v, ft, ts, mlen, dlen = struct.unpack('<BBqhI', meta_frame[:16])
     assert v == 1, "Version must be 1"
     assert ft == 1, "FrameType must be 1 (Metadata)"
-    assert mlen == expected_meta_len, f"MetadataLength mismatch: {mlen} vs {expected_meta_len}"
-    assert dlen == expected_meta_len, f"DataLength mismatch: {dlen} vs {expected_meta_len}"
-    print("[PASS] Test 3: <OMTInfo> metadata frame formatting & null terminator")
+    assert ts == 0, "Timestamp must be 0"
+    assert mlen == 0, f"MetadataLength must be 0 for standalone metadata, got {mlen}"
+    assert dlen == expected_data_len, f"DataLength mismatch: {dlen} vs {expected_data_len}"
+    assert meta_frame[16:].decode('utf-8') == omt_info, "Payload must match exactly"
+    print("[PASS] Test 3: <OMTInfo> metadata frame formatting (no null terminator, MetadataLength=0)")
 
-    # Test 4: Incoming TCP fragmentation and defragmentation
-    # Receiver sends <OMTSubscribe Video="true" />
-    subscribe_cmd = '<OMTSubscribe Video="true" />'
-    subscribe_frame = build_metadata_frame(subscribe_cmd)
+    # Test 4: Full Receiver handshake sequence (MetadataSub + VideoSub + Quality + Tally)
+    sub_meta = build_metadata_frame('<OMTSubscribe Metadata="true" />')
+    sub_vid = build_metadata_frame('<OMTSubscribe Video="true" />')
+    set_qual = build_metadata_frame('<OMTSettings Quality="Default" />')
+    set_tally = build_metadata_frame('<OMTTally Preview="true" Program=="true" />')
     
-    stream = meta_frame + subscribe_frame
+    assert len(sub_meta) == 16 + len('<OMTSubscribe Metadata="true" />'), f"Got {len(sub_meta)}"
+    assert len(sub_vid) == 16 + len('<OMTSubscribe Video="true" />'), f"Got {len(sub_vid)}"
+    assert len(set_qual) == 16 + len('<OMTSettings Quality="Default" />'), f"Got {len(set_qual)}"
+    assert len(set_tally) == 16 + len('<OMTTally Preview="true" Program=="true" />'), f"Got {len(set_tally)}"
+    
+    stream = sub_meta + sub_vid + set_qual + set_tally
+    expected_stream_len = len(sub_meta) + len(sub_vid) + len(set_qual) + len(set_tally)
+    assert len(stream) == expected_stream_len, f"Expected {expected_stream_len}, got {len(stream)}"
+    
+    # TCP defragmentation test with 11-byte chunks
     buffer = bytearray()
     received_frames = []
-    
-    # Deliver in tiny 7-byte chunks to test fragmentation handling
-    chunk_size = 7
+    chunk_size = 11
     for offset in range(0, len(stream), chunk_size):
         buffer.extend(stream[offset:offset + chunk_size])
         while len(buffer) >= 16:
@@ -70,16 +79,14 @@ def run_tests():
                 break
             payload = bytes(buffer[16:total_needed])
             buffer = buffer[total_needed:]
-            if payload.endswith(b'\x00'):
-                payload = payload[:-1]
             received_frames.append((ft, payload.decode('utf-8')))
             
-    assert len(received_frames) == 2, f"Expected 2 frames, got {len(received_frames)}"
-    assert received_frames[0][0] == 1, "Frame 1 must be metadata"
-    assert "OMTInfo" in received_frames[0][1], "Frame 1 must be OMTInfo"
-    assert received_frames[1][0] == 1, "Frame 2 must be metadata"
-    assert received_frames[1][1] == subscribe_cmd, "Frame 2 must match subscribe command exactly"
-    print("[PASS] Test 4: TCP frame defragmentation & <OMTSubscribe Video=\"true\" /> extraction")
+    assert len(received_frames) == 4, f"Expected 4 frames, got {len(received_frames)}"
+    assert received_frames[0][1] == '<OMTSubscribe Metadata="true" />'
+    assert received_frames[1][1] == '<OMTSubscribe Video="true" />'
+    assert received_frames[2][1] == '<OMTSettings Quality="Default" />'
+    assert received_frames[3][1] == '<OMTTally Preview="true" Program=="true" />'
+    print(f"[PASS] Test 4: Receiver handshake stream (4 frames, {len(stream)} bytes) defragmentation & exact match")
 
     # Test 5: Dynamic dimensions support (e.g. 720p or 1080p adaptation)
     test_720p = build_video_header(0x31584D56, 1280, 720, 30000, 1001, 1.7777778, 0, 709, 250000)
