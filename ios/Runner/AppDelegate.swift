@@ -11,6 +11,10 @@ import Flutter
         
         // 1´©ÅÔâú INITIALISATION R├ëSEAU/FLUTTER (Gemini Fix)
         let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+
+        // Keep the display awake while MIMO is open (NDI and OMT monitoring).
+        // This does not bypass the iPhone passcode or Face ID lock.
+        application.isIdleTimerDisabled = true
         
         // 2´©ÅÔâú R├ëCUP├ëRATION DU CONTROLLER (S├®curis├®e apr├¿s super.application)
         guard let controller = window?.rootViewController as? FlutterViewController else {
@@ -98,5 +102,17 @@ import Flutter
         CrashLogger.showLastCrashIfNeeded(in: controller)
         
         return result
+    }
+    
+    override func applicationDidBecomeActive(_ application: UIApplication) {
+        super.applicationDidBecomeActive(application)
+        // Maintain the screen on throughout an active MIMO session.
+        application.isIdleTimerDisabled = true
+    }
+
+    override func applicationWillResignActive(_ application: UIApplication) {
+        // Restore the iPhone's normal auto-lock when leaving MIMO.
+        application.isIdleTimerDisabled = false
+        super.applicationWillResignActive(application)
     }
 }
