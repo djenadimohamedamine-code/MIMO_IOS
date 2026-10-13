@@ -33,6 +33,7 @@ class OMTReceiver {
     var onFrameDecoded: ((CGImage, Int32, Int32) -> Void)?
     var onStateChanged: ((OMTManager.State) -> Void)?
     var onError: ((String) -> Void)?
+    var onDiagnostic: ((String) -> Void)?
     var onStatsUpdated: (([String: Any]) -> Void)?
     
     // Telemetry Statistics
@@ -103,6 +104,7 @@ class OMTReceiver {
         conn.stateUpdateHandler = { [weak self] newState in
             guard let self = self else { return }
             NSLog("[OMTReceiver][TCP] %@:%d state=%@", self.host, self.port, String(describing: newState))
+            self.onDiagnostic?("TCP \(self.host):\(self.port) state=\(newState)")
             switch newState {
             case .ready:
                 NSLog("[OMTReceiver] Connected to %@:%d (%@)", self.host, self.port, self.sourceName)
@@ -112,6 +114,7 @@ class OMTReceiver {
                 
             case .failed(let error):
                 NSLog("[OMTReceiver] Connection failed at %@:%d: %@", self.host, self.port, String(describing: error))
+                self.onDiagnostic?("TCP failed after \(self.bytesReceived) bytes: \(error)")
                 self.onError?("Erreur réseau: \(error.localizedDescription)")
                 self.onStateChanged?(.error)
                 self.stop()
@@ -163,6 +166,7 @@ class OMTReceiver {
                 self?.onError?("Abonnement vidéo échoué: \(error.localizedDescription)")
             } else {
                 NSLog("[OMTReceiver] Subscription sent (%d bytes): %@", frameData.count, subscribeXml)
+                self?.onDiagnostic?("OMTSubscribe sent: \(frameData.count) bytes")
             }
         })
     }
@@ -177,6 +181,7 @@ class OMTReceiver {
             
             if let error = error {
                 NSLog("[OMTReceiver] Receive error after %lld bytes: %@", self.bytesReceived, String(describing: error))
+                self.onDiagnostic?("Receive error after \(self.bytesReceived) bytes: \(error)")
                 self.onError?(error.localizedDescription)
                 self.stop()
                 return
@@ -187,6 +192,7 @@ class OMTReceiver {
                 if self.bytesReceived == 0 {
                     let hexStr = data.prefix(64).map { String(format: "%02X", $0) }.joined(separator: " ")
                     NSLog("[OMTReceiver] FIRST BYTES FROM VMIX (%d bytes): %@", data.count, hexStr)
+                    self.onDiagnostic?("First TCP payload: \(data.count) bytes, hex=\(hexStr)")
                     if let ascii = String(data: data.prefix(128), encoding: .utf8) {
                         NSLog("[OMTReceiver] AS ASCII: %@", ascii)
                     }
@@ -196,6 +202,7 @@ class OMTReceiver {
             
             if isComplete {
                 NSLog("[OMTReceiver] TCP stream closed by remote host")
+                self.onDiagnostic?("Remote closed TCP after \(self.bytesReceived) bytes")
                 self.stop()
                 self.onStateChanged?(.idle)
                 return
@@ -258,6 +265,7 @@ class OMTReceiver {
         framesReceived += 1
         if framesReceived == 1 {
             NSLog("[OMTReceiver] First complete OMT video frame: %d payload bytes", payload.count)
+            onDiagnostic?("First OMT video frame: \(payload.count) bytes")
             onStateChanged?(.receiving)
         }
         
