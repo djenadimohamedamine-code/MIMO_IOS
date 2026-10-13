@@ -62,7 +62,7 @@ class OMTReceiverDisplayUIView: UIView {
     }
     
     @objc private func onFrameDecoded(_ notification: Notification) {
-        guard let image = notification.userInfo?["image"] as? CGImage else { return }
+        guard let image = notification.userInfo?["image"] else { return }
 
         // OMTReceiver already posts decoded frames on the main queue.
         // Do not defer each frame a second time before presenting it.
@@ -75,7 +75,7 @@ class OMTReceiverDisplayUIView: UIView {
         }
     }
 
-    private func displayDecodedFrame(_ image: CGImage) {
+    private func displayDecodedFrame(_ image: Any) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         displayLayer.contents = image
