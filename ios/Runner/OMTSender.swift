@@ -79,6 +79,9 @@ class OMTSender {
     // Bound camera-frame submissions before they enter the serial encoder queue.
     private let pendingFrameLock = NSLock()
     private var hasPendingFrame = false
+    private var isRunning = false
+    private var isStopping = false
+    private let encoderLock = NSLock()
     
     private(set) var state: OMTSenderState = .idle
     private(set) var framesSentTotal: Int64 = 0
@@ -94,14 +97,20 @@ class OMTSender {
     }
     
     var isUsingVMX1: Bool {
+        encoderLock.lock()
+        defer { encoderLock.unlock() }
         return videoEncoder?.isVMX1Active ?? false
     }
     
     var encoderLastError: String? {
+        encoderLock.lock()
+        defer { encoderLock.unlock() }
         return videoEncoder?.lastError
     }
     
     var encodedFramesTotal: Int64 {
+        encoderLock.lock()
+        defer { encoderLock.unlock() }
         return videoEncoder?.encodedFrameCount ?? 0
     }
     
@@ -131,8 +140,31 @@ class OMTSender {
     
     // MARK: - Public API
     
-    /// Start the TCP listener and advertise via Bonjour
+    /// Start the TCP listener and advertise via Bonjour.
+    /// Resilient across restart cycles (idle -> listening -> transmitting -> idle -> restart).
     func start() {
+        pendingFrameLock.lock()
+        if isRunning && !isStopping && listener != nil {
+            pendingFrameLock.unlock()
+            NSLog("[OMTSender] start() called while already active — skipping")
+            return
+        }
+        isStopping = false
+        isRunning = true
+        hasPendingFrame = false
+        pendingFrameLock.unlock()
+        
+        encoderLock.lock()
+        if videoEncoder == nil {
+            videoEncoder = OMTVideoEncoder(
+                width: currentWidth,
+                height: currentHeight,
+                frameRateN: frameRateN,
+                frameRateD: frameRateD
+            )
+        }
+        encoderLock.unlock()
+        
         let startPort = port.rawValue
         let maxPort = max(startPort, startPort + 10)
         var boundListener: NWListener?
@@ -154,6 +186,9 @@ class OMTSender {
         
         guard let listener = boundListener else {
             NSLog("[OMTSender] Failed to create listener on ports %d-%d", startPort, maxPort)
+            pendingFrameLock.lock()
+            isRunning = false
+            pendingFrameLock.unlock()
             updateState(.error)
             onError?("Failed to bind OMT sender port in range \(startPort)-\(maxPort)")
             return
@@ -173,11 +208,25 @@ class OMTSender {
         }
         
         listener.start(queue: queue)
-        NSLog("[OMTSender] Listener starting on port %d", boundPort.rawValue)
+        NSLog("[OMTSender] Listener starting on port %d (lifecycle: started)", boundPort.rawValue)
     }
     
-    /// Stop the listener and all client connections
+    /// Stop the listener, terminate client connections, and safely destroy encoder.
+    /// Thread-safe: prevents new frames from entering, waits for any in-flight
+    /// VMX_EncodeNV12 call to finish without deadlock, and cleans up state.
     func stop() {
+        // 1. Immediately flag stopping & not running under pendingFrameLock
+        // to reject any incoming camera frames at the boundary
+        pendingFrameLock.lock()
+        guard isRunning || isStopping || listener != nil || !sessions.isEmpty else {
+            pendingFrameLock.unlock()
+            return
+        }
+        isStopping = true
+        isRunning = false
+        pendingFrameLock.unlock()
+        
+        // 2. Stop network listener and all active sessions
         listener?.cancel()
         listener = nil
         
@@ -191,20 +240,33 @@ class OMTSender {
             self?.netServicePublisher = nil
         }
         
+        // 3. Thread-safe encoder destruction:
+        // Wait for any in-flight encode (VMX_EncodeNV12) to complete under encoderLock,
+        // then destroy and set to nil. No new encode can start since isRunning = false.
+        encoderLock.lock()
         videoEncoder?.destroy()
         videoEncoder = nil
+        encoderLock.unlock()
+        
+        pendingFrameLock.lock()
+        isStopping = false
+        hasPendingFrame = false
+        pendingFrameLock.unlock()
         
         updateState(.idle)
-        NSLog("[OMTSender] Stopped")
+        NSLog("[OMTSender] Stopped cleanly (lifecycle: stopped, encoder destroyed)")
+    }
+    
+    deinit {
+        stop()
     }
     
     /// Send a video frame to all subscribed receivers (vMix 29).
     /// Does NOT send to connections that have not subscribed yet.
     func sendVideoFrame(pixelData: Data, width: Int32? = nil, height: Int32? = nil) {
-        // Reject frames at the capture boundary instead of retaining large Data
-        // buffers in an unbounded backlog of queue.async closures.
+        // Reject frames at the capture boundary if sender is stopped, stopping, or busy
         pendingFrameLock.lock()
-        guard !hasPendingFrame else {
+        guard isRunning && !isStopping && !hasPendingFrame else {
             pendingFrameLock.unlock()
             return
         }
@@ -219,14 +281,16 @@ class OMTSender {
                 self.pendingFrameLock.unlock()
             }
             
+            self.pendingFrameLock.lock()
+            let active = self.isRunning && !self.isStopping
+            self.pendingFrameLock.unlock()
+            guard active else { return }
+            
             let subscribedSessions = self.sessions.values.filter { $0.isSubscribedToVideo }
             guard !subscribedSessions.isEmpty else {
-                // No client is subscribed to video yet — do not burn CPU encoding
                 return
             }
             
-            // Avoid expensive VMX1 encoding when every subscribed TCP session is busy.
-            // The send loop below still applies per-session backpressure.
             let availableSessions = subscribedSessions.filter { !$0.isSending }
             guard !availableSessions.isEmpty else {
                 self.framesDroppedTotal += 1
@@ -240,9 +304,17 @@ class OMTSender {
                 self.currentHeight = frameH
             }
             
-            // Encode frame using VMX1 (or fallback UYVY)
-            guard let encoder = self.videoEncoder else { return }
-            let encoded = encoder.encode(uyvyData: pixelData, width: frameW, height: frameH)
+            // Thread-safe encoding: hold encoderLock ONLY during encode
+            let encodedResult: (data: Data, codec: Int32)?
+            self.encoderLock.lock()
+            if self.isRunning && !self.isStopping, let encoder = self.videoEncoder {
+                encodedResult = encoder.encode(uyvyData: pixelData, width: frameW, height: frameH)
+            } else {
+                encodedResult = nil
+            }
+            self.encoderLock.unlock()
+            
+            guard let encoded = encodedResult else { return }
             
             // Build binary OMT Video Frame
             let frameData = OMTFrameBuilder.buildVideoFrame(
@@ -263,9 +335,11 @@ class OMTSender {
     
     /// High-performance zero-copy CVPixelBuffer frame transmission using native ARM NEON VMX_EncodeNV12.
     /// Retains the CVPixelBuffer across the async queue dispatch and locks its planes only during encoding.
+    /// Thread-safe against stop() and encoder destruction.
     func sendPixelBuffer(_ pixelBuffer: CVPixelBuffer, width: Int32? = nil, height: Int32? = nil) {
         pendingFrameLock.lock()
-        guard !hasPendingFrame else {
+        // Reject frames at the capture boundary if sender is stopped, stopping, or busy
+        guard isRunning && !isStopping && !hasPendingFrame else {
             pendingFrameLock.unlock()
             return
         }
@@ -279,6 +353,11 @@ class OMTSender {
                 self.hasPendingFrame = false
                 self.pendingFrameLock.unlock()
             }
+            
+            self.pendingFrameLock.lock()
+            let active = self.isRunning && !self.isStopping
+            self.pendingFrameLock.unlock()
+            guard active else { return }
             
             let subscribedSessions = self.sessions.values.filter { $0.isSubscribedToVideo }
             guard !subscribedSessions.isEmpty else {
@@ -298,8 +377,6 @@ class OMTSender {
                 self.currentHeight = frameH
             }
             
-            guard let encoder = self.videoEncoder else { return }
-            
             CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
             defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
             
@@ -312,14 +389,25 @@ class OMTSender {
             let strideY = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
             let strideUV = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
             
-            guard let encoded = encoder.encodeNV12(
-                yPlane: yPlane.assumingMemoryBound(to: UInt8.self),
-                strideY: strideY,
-                uvPlane: uvPlane.assumingMemoryBound(to: UInt8.self),
-                strideUV: strideUV,
-                width: frameW,
-                height: frameH
-            ) else {
+            // Thread-safe encoding: hold encoderLock ONLY during encodeNV12
+            // Guarantees videoEncoder cannot be destroyed while VMX_EncodeNV12 runs
+            let encodedResult: (data: Data, codec: Int32)?
+            self.encoderLock.lock()
+            if self.isRunning && !self.isStopping, let encoder = self.videoEncoder {
+                encodedResult = encoder.encodeNV12(
+                    yPlane: yPlane.assumingMemoryBound(to: UInt8.self),
+                    strideY: strideY,
+                    uvPlane: uvPlane.assumingMemoryBound(to: UInt8.self),
+                    strideUV: strideUV,
+                    width: frameW,
+                    height: frameH
+                )
+            } else {
+                encodedResult = nil
+            }
+            self.encoderLock.unlock()
+            
+            guard let encoded = encodedResult else {
                 self.framesDroppedTotal += 1
                 return
             }
