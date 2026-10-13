@@ -59,6 +59,21 @@ import AVFoundation
     private var bytesSinceLastCalc: Int64 = 0
     private var currentBitrateKbps: Double = 0
     private var statsTimer: Timer?
+    private var diagnosticLines: [String] = []
+    private let diagnosticLock = NSLock()
+
+    private func recordDiagnostic(_ message: String) {
+        diagnosticLock.lock()
+        diagnosticLines.append("\(Date()): \(message)")
+        if diagnosticLines.count > 200 { diagnosticLines.removeFirst(diagnosticLines.count - 200) }
+        diagnosticLock.unlock()
+    }
+
+    private func diagnosticText() -> String {
+        diagnosticLock.lock()
+        defer { diagnosticLock.unlock() }
+        return diagnosticLines.joined(separator: "\n")
+    }
     
     /// Exposed for PlatformView camera preview
     var activeCaptureSession: AVCaptureSession? {
@@ -125,6 +140,9 @@ import AVFoundation
             
         case "getStats":
             result(buildStatsDict())
+
+        case "getDiagnosticLogs":
+            result(diagnosticText())
             
         default:
             result(FlutterMethodNotImplemented)
@@ -197,8 +215,14 @@ import AVFoundation
             self?.setState(.error)
         }
         
+        recordDiagnostic("Start OMT sender: \(sourceName), requested port \(requestedPort)")
+        newSender.onDiagnostic = { [weak self] message in
+            self?.recordDiagnostic(message)
+        }
+
         newSender.onConnectionCountChanged = { [weak self] count in
             NSLog("[OMTManager] Connected receivers: %d", count)
+            self?.recordDiagnostic("Connection count: \(count)")
             self?.sendStatsUpdate()
         }
         
