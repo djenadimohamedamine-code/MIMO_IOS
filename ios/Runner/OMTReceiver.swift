@@ -116,12 +116,14 @@ class OMTReceiver {
                 NSLog("[OMTReceiver] Connection failed at %@:%d: %@", self.host, self.port, String(describing: error))
                 self.onDiagnostic?("TCP failed after \(self.bytesReceived) bytes: \(error)")
                 self.onError?("Erreur réseau: \(error.localizedDescription)")
-                self.onStateChanged?(.error)
                 self.stop()
+                self.onStateChanged?(.error)
                 
             case .cancelled:
                 NSLog("[OMTReceiver] Connection cancelled")
-                self.onStateChanged?(.idle)
+                // Ignore cancellation from stop() after an error or user action.
+                // The manager owns the final idle/error state.
+                self.onDiagnostic?("TCP cancelled (receiver running=\(self.isRunning))")
                 
             case .waiting(let error):
                 NSLog("[OMTReceiver] Connection waiting at %@:%d: %@", self.host, self.port, String(describing: error))
@@ -184,6 +186,7 @@ class OMTReceiver {
                 self.onDiagnostic?("Receive error after \(self.bytesReceived) bytes: \(error)")
                 self.onError?(error.localizedDescription)
                 self.stop()
+                self.onStateChanged?(.error)
                 return
             }
             
