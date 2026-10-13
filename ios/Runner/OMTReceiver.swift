@@ -28,6 +28,7 @@ class OMTReceiver {
     
     // Defragmentation buffer
     private var receiveBuffer = Data()
+    private var parsedFrameCount = 0
     
     // Callbacks
     var onFrameDecoded: ((CGImage, Int32, Int32) -> Void)?
@@ -70,6 +71,7 @@ class OMTReceiver {
         isRunning = true
         
         receiveBuffer.removeAll(keepingCapacity: true)
+        parsedFrameCount = 0
         framesReceived = 0
         framesDecoded = 0
         framesDropped = 0
@@ -231,6 +233,8 @@ class OMTReceiver {
         // [12..15]: DataLength (Int32 LE)
         while receiveBuffer.count >= 16 {
             let frameType = receiveBuffer[1]
+            let version = receiveBuffer[0]
+            let metadataLen = Int(receiveBuffer[10]) | (Int(receiveBuffer[11]) << 8)
             
             // Data storage is not guaranteed to be aligned for Int32.load.
             let dataLen = receiveBuffer.readLEInt32(offset: 12)
@@ -242,6 +246,9 @@ class OMTReceiver {
                 continue
             }
             
+            if parsedFrameCount < 8 {
+                onDiagnostic?("OMT header: version=\(version) type=\(frameType) metadataLen=\(metadataLen) dataLen=\(dataLen) buffered=\(receiveBuffer.count)")
+            }
             let totalFrameLength = 16 + Int(dataLen)
             if receiveBuffer.count < totalFrameLength {
                 // Incomplete frame, wait for more data from TCP
@@ -251,6 +258,7 @@ class OMTReceiver {
             // Extract complete payload and slice buffer
             let payload = receiveBuffer.subdata(in: 16..<totalFrameLength)
             receiveBuffer.removeSubrange(0..<totalFrameLength)
+            parsedFrameCount += 1
             
             if frameType == OMTFrameType.video.rawValue {
                 handleVideoPayload(payload)
@@ -259,6 +267,9 @@ class OMTReceiver {
             }
         }
         
+        if framesReceived == 0 && bytesReceived > 0 && parsedFrameCount < 8 {
+            onDiagnostic?("OMT parser waiting: bytesTotal=\(bytesReceived) framesParsed=\(parsedFrameCount) buffered=\(receiveBuffer.count)")
+        }
         updateStatsIfNeeded()
     }
     
@@ -437,6 +448,7 @@ class OMTReceiver {
         if let str = String(data: payload, encoding: .utf8) {
             let clean = str.trimmingCharacters(in: CharacterSet(charactersIn: "\0 \r\n"))
             NSLog("[OMTReceiver] Received metadata: %@", clean)
+            onDiagnostic?("OMT metadata: \(String(clean.prefix(300)))")
         }
     }
     
