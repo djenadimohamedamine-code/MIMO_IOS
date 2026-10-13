@@ -182,6 +182,14 @@ class OMTReceiver {
             }
             
             if let data = content, !data.isEmpty {
+                // DEBUG: log first chunk received from vMix
+                if self.bytesReceived == 0 {
+                    let hexStr = data.prefix(64).map { String(format: "%02X", $0) }.joined(separator: " ")
+                    NSLog("[OMTReceiver] FIRST BYTES FROM VMIX (%d bytes): %@", data.count, hexStr)
+                    if let ascii = String(data: data.prefix(128), encoding: .utf8) {
+                        NSLog("[OMTReceiver] AS ASCII: %@", ascii)
+                    }
+                }
                 self.processIncomingBytes(data)
             }
             

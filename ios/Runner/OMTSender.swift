@@ -330,12 +330,25 @@ class OMTSender {
             version: "1.0"
         )
         let metadataFrame = OMTFrameBuilder.buildMetadataFrame(xmlString: xml)
-        session.connection.send(content: metadataFrame, completion: .contentProcessed { [weak self] error in
+        session.connection.send(content: metadataFrame, completion: .contentProcessed { [weak self, weak session] error in
+            guard let self = self, let session = session else { return }
             if let error = error {
                 NSLog("[OMTSender] Error sending identity metadata: %@", error.localizedDescription)
             } else {
                 NSLog("[OMTSender] Sent <OMTInfo> identity metadata to %@", session.remoteEndpoint)
-                self?.bytesSentTotal += Int64(metadataFrame.count)
+                self.bytesSentTotal += Int64(metadataFrame.count)
+                
+                // Auto-subscribe fallback: if vMix doesn't send <OMTSubscribe Video="true" />
+                // within 2 seconds, auto-subscribe it so video flows immediately
+                self.queue.asyncAfter(deadline: .now() + 2.0) { [weak self, weak session] in
+                    guard let self = self, let session = session else { return }
+                    if !session.isSubscribedToVideo && self.sessions[session.id] != nil {
+                        NSLog("[OMTSender] Auto-subscribing %@ (no OMTSubscribe received within 2s)", session.remoteEndpoint)
+                        session.isSubscribedToVideo = true
+                        self.updateSenderState()
+                        self.onSubscribedCountChanged?(self.subscribedConnectionCount)
+                    }
+                }
             }
         })
     }
@@ -371,12 +384,27 @@ class OMTSender {
     }
     
     private func parseIncomingFrames(session: ClientSession) {
+        // If buffer starts with XML text (vMix sending raw XML without OMT framing), handle it
+        if let firstByte = session.incomingBuffer.first, firstByte == UInt8(ascii: "<") {
+            // Raw XML command (no OMT framing) — find null terminator or newline
+            if let xmlStr = String(data: session.incomingBuffer, encoding: .utf8) {
+                NSLog("[OMTSender] Raw XML from %@: %@", session.remoteEndpoint, xmlStr)
+                let cmd = OMTFrameBuilder.parseCommand(from: xmlStr)
+                handleCommand(cmd, session: session)
+                session.incomingBuffer.removeAll()
+            }
+            return
+        }
+        
         while session.incomingBuffer.count >= 16 {
             let version = session.incomingBuffer[0]
-            guard version == 1 else {
-                NSLog("[OMTSender] Protocol error: invalid version %d from %@", version, session.remoteEndpoint)
-                removeSession(id: session.id)
-                return
+            // Tolerate version != 1 (log but continue parsing)
+            if version != 1 {
+                let hexDump = session.incomingBuffer.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " ")
+                NSLog("[OMTSender] Unexpected version byte %d from %@ — first 32 bytes: %@", version, session.remoteEndpoint, hexDump)
+                // Try to skip 1 byte and resync
+                session.incomingBuffer.remove(at: 0)
+                continue
             }
             
             let frameType = session.incomingBuffer[1]
@@ -384,8 +412,9 @@ class OMTSender {
             
             guard dataLength >= 0 && dataLength <= 10_485_760 else {
                 NSLog("[OMTSender] Protocol error: invalid DataLength %d from %@", dataLength, session.remoteEndpoint)
-                removeSession(id: session.id)
-                return
+                // Resync: skip 1 byte instead of dropping entire connection
+                session.incomingBuffer.remove(at: 0)
+                continue
             }
             
             let totalFrameBytes = 16 + Int(dataLength)
@@ -404,6 +433,28 @@ class OMTSender {
         }
     }
     
+    private func handleCommand(_ cmd: OMTCommand, session: ClientSession) {
+        switch cmd {
+        case .subscribeVideo(let subscribed):
+            session.isSubscribedToVideo = subscribed
+            NSLog("[OMTSender] %@ Video subscription -> %@", session.remoteEndpoint, subscribed ? "SUBSCRIBED" : "UNSUBSCRIBED")
+            updateSenderState()
+            onSubscribedCountChanged?(subscribedConnectionCount)
+        case .subscribeAudio(let subscribed):
+            session.isSubscribedToAudio = subscribed
+        case .subscribeMetadata(let subscribed):
+            session.isSubscribedToMetadata = subscribed
+        case .setPreview(let preview):
+            session.wantsPreview = preview
+        case .setQuality(let quality):
+            session.suggestedQuality = quality
+        case .tally(let preview, let program):
+            NSLog("[OMTSender] Tally from %@: preview=%@ program=%@", session.remoteEndpoint, preview ? "true" : "false", program ? "true" : "false")
+        case .unknown(let raw):
+            NSLog("[OMTSender] Unknown XML from %@: %@", session.remoteEndpoint, raw)
+        }
+    }
+    
     private func handleMetadataPayload(_ payload: Data, session: ClientSession) {
         var cleanData = payload
         // Strip null terminator if present
@@ -416,38 +467,9 @@ class OMTSender {
             return
         }
         
-        let cmd = OMTFrameBuilder.parseCommand(from: xmlString)
         NSLog("[OMTSender] Received command from %@: %@", session.remoteEndpoint, xmlString)
-        
-        switch cmd {
-        case .subscribeVideo(let subscribed):
-            session.isSubscribedToVideo = subscribed
-            NSLog("[OMTSender] %@ Video subscription -> %@", session.remoteEndpoint, subscribed ? "SUBSCRIBED" : "UNSUBSCRIBED")
-            updateSenderState()
-            onSubscribedCountChanged?(subscribedConnectionCount)
-            
-        case .subscribeAudio(let subscribed):
-            session.isSubscribedToAudio = subscribed
-            NSLog("[OMTSender] %@ Audio subscription -> %@", session.remoteEndpoint, subscribed ? "SUBSCRIBED" : "UNSUBSCRIBED")
-            
-        case .subscribeMetadata(let subscribed):
-            session.isSubscribedToMetadata = subscribed
-            
-        case .setPreview(let preview):
-            session.wantsPreview = preview
-            NSLog("[OMTSender] %@ Preview mode -> %@", session.remoteEndpoint, preview ? "ON" : "OFF")
-            
-        case .setQuality(let quality):
-            session.suggestedQuality = quality
-            NSLog("[OMTSender] %@ Suggested quality -> %@", session.remoteEndpoint, quality)
-            
-        case .tally(let preview, let program):
-            NSLog("[OMTSender] %@ Tally: preview=%@ program=%@",
-                  session.remoteEndpoint, preview ? "true" : "false", program ? "true" : "false")
-            
-        case .unknown(let raw):
-            NSLog("[OMTSender] Unhandled metadata XML: %@", raw)
-        }
+        let cmd = OMTFrameBuilder.parseCommand(from: xmlString)
+        handleCommand(cmd, session: session)
     }
     
     private func removeSession(id: ObjectIdentifier) {
