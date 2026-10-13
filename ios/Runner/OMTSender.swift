@@ -65,6 +65,7 @@ class OMTSender {
     var onConnectionCountChanged: ((Int) -> Void)?
     var onSubscribedCountChanged: ((Int) -> Void)?
     var onBytesSent: ((Int64) -> Void)?
+    var onDiagnostic: ((String) -> Void)?
     
     // MARK: - State
     
@@ -290,16 +291,19 @@ class OMTSender {
         let session = ClientSession(connection: connection)
         let id = session.id
         NSLog("[OMTSender][TCP] Accepted inbound connection from %@", session.remoteEndpoint)
+        onDiagnostic?("Accepted \(session.remoteEndpoint)")
 
         connection.stateUpdateHandler = { [weak self, weak session] newState in
             guard let self = self, let session = session else { return }
             NSLog("[OMTSender][TCP] Connection %@ state: %@", session.remoteEndpoint, String(describing: newState))
+            self.onDiagnostic?("State \(session.remoteEndpoint): \(newState)")
             switch newState {
             case .ready:
                 NSLog("[OMTSender] Receiver connected from %@", session.remoteEndpoint)
                 self.queue.async {
                     self.sessions[id] = session
                     NSLog("[OMTSender][TCP] Registered %@, active sessions: %d", session.remoteEndpoint, self.sessions.count)
+                    self.onDiagnostic?("Registered \(session.remoteEndpoint), active=\(self.sessions.count)")
                     self.onConnectionCountChanged?(self.sessions.count)
                     self.updateSenderState()
                     // Send official OMT source identity metadata (<OMTInfo ... />)
@@ -441,6 +445,7 @@ class OMTSender {
         case .subscribeVideo(let subscribed):
             session.isSubscribedToVideo = subscribed
             NSLog("[OMTSender] %@ Video subscription -> %@", session.remoteEndpoint, subscribed ? "SUBSCRIBED" : "UNSUBSCRIBED")
+            onDiagnostic?("Video subscription \(session.remoteEndpoint): \(subscribed)")
             updateSenderState()
             onSubscribedCountChanged?(subscribedConnectionCount)
         case .subscribeAudio(let subscribed):
@@ -482,6 +487,7 @@ class OMTSender {
         }
         session.connection.cancel()
         NSLog("[OMTSender][TCP] Removed %@. Reason: %@. Remaining: %d", session.remoteEndpoint, reason, sessions.count)
+        onDiagnostic?("Removed \(session.remoteEndpoint), reason=\(reason), remaining=\(sessions.count)")
         
         onConnectionCountChanged?(sessions.count)
         onSubscribedCountChanged?(subscribedConnectionCount)
