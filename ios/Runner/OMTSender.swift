@@ -290,6 +290,9 @@ class OMTSender {
     private func handleNewConnection(_ connection: NWConnection) {
         let session = ClientSession(connection: connection)
         let id = session.id
+        // Retain the session before async NWConnection callbacks capture it weakly.
+        // This method runs on the sender's serial queue.
+        sessions[id] = session
         NSLog("[OMTSender][TCP] Accepted inbound connection from %@", session.remoteEndpoint)
         onDiagnostic?("Accepted \(session.remoteEndpoint)")
 
