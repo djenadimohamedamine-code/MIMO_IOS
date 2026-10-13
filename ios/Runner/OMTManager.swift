@@ -444,10 +444,15 @@ import AVFoundation
         
         receiver?.stop()
         let newReceiver = OMTReceiver(host: host, port: UInt16(port), sourceName: sourceName)
+        recordDiagnostic("Receiver connecting: \(sourceName) at \(host):\(port)")
+        newReceiver.onDiagnostic = { [weak self] message in
+            self?.recordDiagnostic("Receiver: \(message)")
+        }
         newReceiver.onStateChanged = { [weak self] state in
             self?.setState(state)
         }
         newReceiver.onError = { [weak self] err in
+            self?.recordDiagnostic("Receiver ERROR: \(err)")
             self?.sendEvent(["type": "error", "message": "OMT Réception: \(err)"])
         }
         newReceiver.onStatsUpdated = { [weak self] stats in
