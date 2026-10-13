@@ -185,60 +185,88 @@ def run_tests():
     
     class MockOMTSender:
         def __init__(self):
-            self.lock = threading.Lock()
+            self.pending_lock = threading.Lock()
             self.encoder_lock = threading.Lock()
             self.is_running = False
             self.is_stopping = False
             self.has_pending_frame = False
+            self.lifecycle_generation = 0
             self.encoder = None
             self.frames_accepted = 0
+            self.frames_broadcast = 0
             self.frames_rejected = 0
 
         def start(self):
-            with self.lock:
+            with self.pending_lock:
                 if self.is_running and not self.is_stopping:
                     return
                 self.is_running = True
                 self.is_stopping = False
                 self.has_pending_frame = False
+                self.lifecycle_generation += 1
             with self.encoder_lock:
                 if self.encoder is None:
                     self.encoder = "VMX1_ACTIVE"
 
         def send_frame(self):
-            with self.lock:
+            with self.pending_lock:
                 if not self.is_running or self.is_stopping or self.has_pending_frame:
                     self.frames_rejected += 1
                     return False
                 self.has_pending_frame = True
+                frame_gen = self.lifecycle_generation
             
-            # Simulate async queue encode
+            # Simulate async queue encode & broadcast
             try:
-                with self.encoder_lock:
-                    if not self.is_running or self.is_stopping or self.encoder is None:
-                        self.frames_rejected += 1
-                        return False
-                    # Safe in-memory encode
-                    assert self.encoder == "VMX1_ACTIVE", "Encoder must not be destroyed during encode!"
-                    time.sleep(0.001)
-                    self.frames_accepted += 1
+                # Lock hierarchy: pending_lock -> encoder_lock (no data race)
+                can_encode = False
+                with self.pending_lock:
+                    if self.is_running and not self.is_stopping and self.lifecycle_generation == frame_gen:
+                        can_encode = True
+                        self.encoder_lock.acquire()
+                
+                encoded = False
+                if can_encode:
+                    try:
+                        if self.encoder is not None:
+                            # Safe in-memory encode under encoder_lock
+                            assert self.encoder == "VMX1_ACTIVE", "Encoder must not be destroyed during encode!"
+                            time.sleep(0.001)
+                            self.frames_accepted += 1
+                            encoded = True
+                    finally:
+                        self.encoder_lock.release()
+                
+                if not encoded:
+                    return False
+                
+                # Check before broadcast: cannot transmit after stop()
+                with self.pending_lock:
+                    can_broadcast = self.is_running and not self.is_stopping and self.lifecycle_generation == frame_gen
+                
+                if can_broadcast:
+                    self.frames_broadcast += 1
                     return True
+                return False
             finally:
-                with self.lock:
-                    self.has_pending_frame = False
+                with self.pending_lock:
+                    if self.lifecycle_generation == frame_gen:
+                        self.has_pending_frame = False
 
         def stop(self):
-            with self.lock:
+            with self.pending_lock:
                 if not self.is_running and not self.is_stopping:
                     return
                 self.is_stopping = True
                 self.is_running = False
+                self.has_pending_frame = False
+                self.lifecycle_generation += 1
 
             # Wait for in-flight encode and safely destroy
             with self.encoder_lock:
                 self.encoder = None
 
-            with self.lock:
+            with self.pending_lock:
                 self.is_stopping = False
                 self.has_pending_frame = False
 
@@ -249,7 +277,7 @@ def run_tests():
 
     # 2. Cycle transmission
     success = sender.send_frame()
-    assert success and sender.frames_accepted == 1
+    assert success and sender.frames_accepted == 1 and sender.frames_broadcast == 1
 
     # 3. Concurrence stop() pendant transmission
     t_frame = threading.Thread(target=sender.send_frame)
@@ -259,7 +287,7 @@ def run_tests():
     t_frame.join()
     t_stop.join()
 
-    # Rejection post-stop
+    # Rejection post-stop: frames rejected and NOT broadcast
     rejected = sender.send_frame()
     assert not rejected, "Frames must be rejected after stop()"
     assert sender.encoder is None, "Encoder must be destroyed after stop()"
@@ -268,8 +296,8 @@ def run_tests():
     sender.start()
     assert sender.is_running and sender.encoder == "VMX1_ACTIVE", "Encoder must be re-instantiated on restart"
     restarted_frame = sender.send_frame()
-    assert restarted_frame, "Frames must be accepted after restart"
-    print("[PASS] Test 8: OMTSender lifecycle state machine & concurrent stop() / sendPixelBuffer() safety")
+    assert restarted_frame, "Frames must be accepted and broadcast after restart"
+    print("[PASS] Test 8: OMTSender lifecycle state machine, strict lock hierarchy & broadcast prevention post-stop")
 
     print("--------------------------------------------------")
     print("RESULT: ALL 8 OMT SPEC PROTOCOL TESTS PASSED 100%!")

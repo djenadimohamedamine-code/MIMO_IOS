@@ -81,6 +81,7 @@ class OMTSender {
     private var hasPendingFrame = false
     private var isRunning = false
     private var isStopping = false
+    private var lifecycleGeneration: UInt64 = 0
     private let encoderLock = NSLock()
     
     private(set) var state: OMTSenderState = .idle
@@ -152,6 +153,7 @@ class OMTSender {
         isStopping = false
         isRunning = true
         hasPendingFrame = false
+        lifecycleGeneration &+= 1
         pendingFrameLock.unlock()
         
         encoderLock.lock()
@@ -224,6 +226,8 @@ class OMTSender {
         }
         isStopping = true
         isRunning = false
+        hasPendingFrame = false
+        lifecycleGeneration &+= 1
         pendingFrameLock.unlock()
         
         // 2. Stop network listener and all active sessions
@@ -271,18 +275,21 @@ class OMTSender {
             return
         }
         hasPendingFrame = true
+        let frameGen = self.lifecycleGeneration
         pendingFrameLock.unlock()
 
         queue.async { [weak self] in
             guard let self = self else { return }
             defer {
                 self.pendingFrameLock.lock()
-                self.hasPendingFrame = false
+                if self.lifecycleGeneration == frameGen {
+                    self.hasPendingFrame = false
+                }
                 self.pendingFrameLock.unlock()
             }
             
             self.pendingFrameLock.lock()
-            let active = self.isRunning && !self.isStopping
+            let active = self.isRunning && !self.isStopping && self.lifecycleGeneration == frameGen
             self.pendingFrameLock.unlock()
             guard active else { return }
             
@@ -304,17 +311,30 @@ class OMTSender {
                 self.currentHeight = frameH
             }
             
-            // Thread-safe encoding: hold encoderLock ONLY during encode
-            let encodedResult: (data: Data, codec: Int32)?
-            self.encoderLock.lock()
-            if self.isRunning && !self.isStopping, let encoder = self.videoEncoder {
-                encodedResult = encoder.encode(uyvyData: pixelData, width: frameW, height: frameH)
-            } else {
-                encodedResult = nil
+            // Consistent lock order: pendingFrameLock -> encoderLock
+            // Completely eliminates data race: isRunning/isStopping read strictly under pendingFrameLock
+            var encodedResult: (data: Data, codec: Int32)? = nil
+            self.pendingFrameLock.lock()
+            let canEncode = self.isRunning && !self.isStopping && self.lifecycleGeneration == frameGen
+            if canEncode {
+                self.encoderLock.lock()
             }
-            self.encoderLock.unlock()
+            self.pendingFrameLock.unlock()
+            
+            if canEncode {
+                if let encoder = self.videoEncoder {
+                    encodedResult = encoder.encode(uyvyData: pixelData, width: frameW, height: frameH)
+                }
+                self.encoderLock.unlock()
+            }
             
             guard let encoded = encodedResult else { return }
+            
+            // Prevent broadcast if sender stopped during encoding
+            self.pendingFrameLock.lock()
+            let canBroadcast = self.isRunning && !self.isStopping && self.lifecycleGeneration == frameGen
+            self.pendingFrameLock.unlock()
+            guard canBroadcast else { return }
             
             // Build binary OMT Video Frame
             let frameData = OMTFrameBuilder.buildVideoFrame(
@@ -344,18 +364,21 @@ class OMTSender {
             return
         }
         hasPendingFrame = true
+        let frameGen = self.lifecycleGeneration
         pendingFrameLock.unlock()
 
         queue.async { [weak self] in
             guard let self = self else { return }
             defer {
                 self.pendingFrameLock.lock()
-                self.hasPendingFrame = false
+                if self.lifecycleGeneration == frameGen {
+                    self.hasPendingFrame = false
+                }
                 self.pendingFrameLock.unlock()
             }
             
             self.pendingFrameLock.lock()
-            let active = self.isRunning && !self.isStopping
+            let active = self.isRunning && !self.isStopping && self.lifecycleGeneration == frameGen
             self.pendingFrameLock.unlock()
             guard active else { return }
             
@@ -389,25 +412,40 @@ class OMTSender {
             let strideY = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
             let strideUV = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
             
-            // Thread-safe encoding: hold encoderLock ONLY during encodeNV12
-            // Guarantees videoEncoder cannot be destroyed while VMX_EncodeNV12 runs
-            let encodedResult: (data: Data, codec: Int32)?
-            self.encoderLock.lock()
-            if self.isRunning && !self.isStopping, let encoder = self.videoEncoder {
-                encodedResult = encoder.encodeNV12(
-                    yPlane: yPlane.assumingMemoryBound(to: UInt8.self),
-                    strideY: strideY,
-                    uvPlane: uvPlane.assumingMemoryBound(to: UInt8.self),
-                    strideUV: strideUV,
-                    width: frameW,
-                    height: frameH
-                )
-            } else {
-                encodedResult = nil
+            // Consistent lock order: pendingFrameLock -> encoderLock
+            // Completely eliminates data race: isRunning/isStopping read strictly under pendingFrameLock
+            var encodedResult: (data: Data, codec: Int32)? = nil
+            self.pendingFrameLock.lock()
+            let canEncode = self.isRunning && !self.isStopping && self.lifecycleGeneration == frameGen
+            if canEncode {
+                self.encoderLock.lock()
             }
-            self.encoderLock.unlock()
+            self.pendingFrameLock.unlock()
+            
+            if canEncode {
+                if let encoder = self.videoEncoder {
+                    encodedResult = encoder.encodeNV12(
+                        yPlane: yPlane.assumingMemoryBound(to: UInt8.self),
+                        strideY: strideY,
+                        uvPlane: uvPlane.assumingMemoryBound(to: UInt8.self),
+                        strideUV: strideUV,
+                        width: frameW,
+                        height: frameH
+                    )
+                }
+                self.encoderLock.unlock()
+            }
             
             guard let encoded = encodedResult else {
+                self.framesDroppedTotal += 1
+                return
+            }
+            
+            // Prevent broadcast if sender stopped during encoding
+            self.pendingFrameLock.lock()
+            let canBroadcast = self.isRunning && !self.isStopping && self.lifecycleGeneration == frameGen
+            self.pendingFrameLock.unlock()
+            guard canBroadcast else {
                 self.framesDroppedTotal += 1
                 return
             }
