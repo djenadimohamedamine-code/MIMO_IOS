@@ -528,6 +528,7 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
   bool _isRecording = false;
   int _recordSeconds = 0;
   Timer? _recordTimer;
+  bool _isDisposed = false;
 
   @override
   void initState() {
@@ -538,9 +539,18 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
     ]);
   }
 
+  void _stopReceiver() {
+    if (_isDisposed) return;
+    _isDisposed = true;
+    _recordTimer?.cancel();
+    try {
+      _viewChannel?.invokeMethod('stop');
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
-    _recordTimer?.cancel();
+    _stopReceiver();
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     super.dispose();
   }
@@ -647,50 +657,60 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Center(
-            child: AspectRatio(
-              aspectRatio: 16 / 9,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: Platform.isIOS
-                      ? UiKitView(
-                          viewType: 'ndi-view',
-                          creationParams: {
-                            'name': widget.sourceName,
-                            'quality': _quality,
-                            'muted': _isMuted,
-                          },
-                          creationParamsCodec: const StandardMessageCodec(),
-                          onPlatformViewCreated: _onViewCreated,
-                        )
-                      : AndroidView(
-                          viewType: 'ndi-view',
-                          creationParams: {
-                            'name': widget.sourceName,
-                            'quality': _quality,
-                            'muted': _isMuted,
-                          },
-                          creationParamsCodec: const StandardMessageCodec(),
-                          onPlatformViewCreated: _onViewCreated,
-                        ),
+    return PopScope(
+      canPop: true,
+      onPopInvoked: (didPop) {
+        if (didPop) {
+          _stopReceiver();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+            Center(
+              child: AspectRatio(
+                aspectRatio: 16 / 9,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Platform.isIOS
+                        ? UiKitView(
+                            viewType: 'ndi-view',
+                            creationParams: {
+                              'name': widget.sourceName,
+                              'quality': _quality,
+                              'muted': _isMuted,
+                            },
+                            creationParamsCodec: const StandardMessageCodec(),
+                            onPlatformViewCreated: _onViewCreated,
+                          )
+                        : AndroidView(
+                            viewType: 'ndi-view',
+                            creationParams: {
+                              'name': widget.sourceName,
+                              'quality': _quality,
+                              'muted': _isMuted,
+                            },
+                            creationParamsCodec: const StandardMessageCodec(),
+                            onPlatformViewCreated: _onViewCreated,
+                          ),
+                ),
               ),
             ),
-          ),
 
-          // ÔöÇÔöÇ BOUTON RETOUR
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 8,
-            left: 12,
-            child: IconButton(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 22),
-              style: IconButton.styleFrom(backgroundColor: Colors.black54),
+            // ── BOUTON RETOUR
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              left: 12,
+              child: IconButton(
+                onPressed: () {
+                  _stopReceiver();
+                  Navigator.pop(context);
+                },
+                icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 22),
+                style: IconButton.styleFrom(backgroundColor: Colors.black54),
+              ),
             ),
-          ),
 
           // ÔöÇÔöÇ INDICATEUR ENREGISTREMENT (REC)
           if (_isRecording)
@@ -783,8 +803,9 @@ class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 // ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ

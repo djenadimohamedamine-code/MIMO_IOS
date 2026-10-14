@@ -69,8 +69,11 @@ class NDIView: NSObject, FlutterPlatformView {
         super.init()
         
         if let messenger = messenger {
-            self.channel = FlutterMethodChannel(name: "com.antigravity/ndi_view_\(viewId)", binaryMessenger: messenger)
-            self.channel?.setMethodCallHandler(handle)
+            let ch = FlutterMethodChannel(name: "com.antigravity/ndi_view_\(viewId)", binaryMessenger: messenger)
+            self.channel = ch
+            ch.setMethodCallHandler({ [weak self] (call, result) in
+                self?.handle(call, result: result)
+            })
         }
         
         if let params = args as? [String: Any] {
@@ -98,6 +101,9 @@ class NDIView: NSObject, FlutterPlatformView {
 
     private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
+        case "stop", "dispose":
+            stop()
+            result(true)
         case "toggleRecord":
             isRecording ? stopRecording() : startRecording()
             result(isRecording)
@@ -191,13 +197,15 @@ class NDIView: NSObject, FlutterPlatformView {
     }
 
     private func startReceive(sourceName: String, quality: String) {
+        guard isRunning else { return }
         // Flush audio buffer queue immediately on source switch
         playerNode?.stop()
         playerNode?.play()
         
         receiveQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, self.isRunning else { return }
             if let old = self.recvInstance { NDIlib_recv_destroy(old); self.recvInstance = nil }
+            guard self.isRunning else { return }
             var recvCreate = NDIlib_recv_create_v3_t()
             guard let find = NDIManager.shared.findInstance else { return }
             var noSources: UInt32 = 0
@@ -258,12 +266,12 @@ class NDIView: NSObject, FlutterPlatformView {
     }
 
     private func performAutoRecovery() {
-        guard !isRecovering, let name = currentSourceName else { return }
+        guard isRunning, !isRecovering, let name = currentSourceName else { return }
         isRecovering = true
-        print("ÔÜá´©Å Flux NDI perdu (Heartbeat Timeout). Tentative de reconnexion automatique...")
+        print("⚠️ Flux NDI perdu (Heartbeat Timeout). Tentative de reconnexion automatique...")
         
         recoveryQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, self.isRunning else { return }
             // Reset discovery manually to refresh network targets
             self.refreshSources()
             
@@ -450,7 +458,8 @@ class NDIView: NSObject, FlutterPlatformView {
         }
     }
 
-    deinit {
+    func stop() {
+        guard isRunning else { return }
         isRunning = false
         if isRecording { stopRecording() }
         if let node = playerNode {
@@ -461,11 +470,18 @@ class NDIView: NSObject, FlutterPlatformView {
             audioEngine = nil
         }
         
+        channel?.setMethodCallHandler(nil)
+        channel = nil
+        
         // 🛡️ CRITICAL FIX: Destroy NDI receiver on its own queue to avoid SIGABRT
         let oldRecv = self.recvInstance
         self.recvInstance = nil
         receiveQueue.async {
             if let recv = oldRecv { NDIlib_recv_destroy(recv) }
         }
+    }
+
+    deinit {
+        stop()
     }
 }
