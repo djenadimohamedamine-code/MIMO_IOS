@@ -10,7 +10,8 @@ import 'omt_protocol.dart';
 /// This is completely separate from 'com.antigravity/ndi'
 class OMTService {
   static const MethodChannel _channel = MethodChannel('com.antigravity/omt');
-  static const EventChannel _eventChannel = EventChannel('com.antigravity/omt_events');
+  static const MethodChannel _eventChannel = MethodChannel('com.antigravity/omt_events');
+  static const StandardMethodCodec _eventCodec = StandardMethodCodec();
 
   // Singleton
   static final OMTService _instance = OMTService._internal();
@@ -47,20 +48,49 @@ class OMTService {
     final shutdown = _shutdownFuture;
     if (shutdown != null) await shutdown;
     if (generation != _lifecycleGeneration || _eventSubscription != null) return;
+
+    // A broadcast StreamController's onCancel cannot await the native cancel
+    // handshake. Use one native subscription and distribute its events through
+    // the public broadcast controllers below. This single-subscription stream
+    // lets dispose() await cancellation before another screen sends "listen".
+    late final StreamController<dynamic> nativeEvents;
+    nativeEvents = StreamController<dynamic>(onCancel: () async {
+      _eventChannel.binaryMessenger.setMessageHandler(_eventChannel.name, null);
+      try {
+        await _eventChannel.invokeMethod<void>('cancel');
+      } catch (error) {
+        _errorController.add('Event channel cancel error: $error');
+      }
+    });
+    _eventSubscription = nativeEvents.stream.listen(
+      (event) {
+        if (generation == _lifecycleGeneration) _handleNativeEvent(event);
+      },
+      onError: (Object error) {
+        if (generation == _lifecycleGeneration) {
+          _errorController.add('Event channel error: $error');
+        }
+      },
+    );
+    _eventChannel.binaryMessenger.setMessageHandler(_eventChannel.name, (message) async {
+      if (generation != _lifecycleGeneration || nativeEvents.isClosed) return null;
+      if (message == null) {
+        await nativeEvents.close();
+      } else {
+        try {
+          nativeEvents.add(_eventCodec.decodeEnvelope(message));
+        } catch (error) {
+          nativeEvents.addError(error);
+        }
+      }
+      return null;
+    });
     try {
-      _eventSubscription = _eventChannel.receiveBroadcastStream().listen(
-        (event) {
-          if (generation == _lifecycleGeneration) _handleNativeEvent(event);
-        },
-        onError: (Object error) {
-          if (generation == _lifecycleGeneration) {
-            _errorController.add('Event channel error: $error');
-          }
-        },
-      );
-    } catch (e) {
-      // Event channel may not be available on non-iOS platforms
-      print('[OMT] Event channel init: $e');
+      await _eventChannel.invokeMethod<void>('listen');
+    } catch (error) {
+      if (generation == _lifecycleGeneration && !nativeEvents.isClosed) {
+        nativeEvents.addError(error);
+      }
     }
   }
 

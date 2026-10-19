@@ -53,6 +53,7 @@ class _OMTScreenState extends State<OMTScreen>
   Future<void> _initService() async {
     await _omtService.initialize();
     if (!mounted) return;
+    _connectionState = _omtService.currentState;
 
     _stateSub = _omtService.stateStream.listen((state) {
       if (mounted) setState(() => _connectionState = state);

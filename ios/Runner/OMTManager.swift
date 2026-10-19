@@ -435,7 +435,11 @@ import AVFoundation
     }
     
     private func handleStartDiscovery(result: @escaping FlutterResult) {
-        setState(.discovering)
+        // Browsing sources must not hide an already active sender/receiver
+        // when its screen is reopened.
+        if currentState == .idle || currentState == .error {
+            setState(.discovering)
+        }
         discovery.startDiscovery()
         result(nil)
     }
@@ -614,6 +618,7 @@ extension OMTManager: FlutterStreamHandler {
     
     func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         self.eventSink = events
+        sendEvent(["type": "stateChanged", "state": currentState.rawValue])
         return nil
     }
     
