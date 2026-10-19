@@ -22,6 +22,20 @@ class OMTReceiver {
     private var connection: NWConnection?
     private let receiveQueue = DispatchQueue(label: "com.antigravity.omt.receiver", qos: .userInteractive)
     private let decodeQueue = DispatchQueue(label: "com.antigravity.omt.receiver.decode", qos: .userInteractive)
+    private struct VideoPacket {
+        let codec: Int32
+        let width: Int32
+        let height: Int32
+        let data: Data
+    }
+    private struct DecodedFrame {
+        let image: CGImage
+        let width: Int32
+        let height: Int32
+    }
+    private lazy var decodeWorker = LatestValueWorker<VideoPacket>(queue: decodeQueue)
+    private let displayWorker = LatestValueWorker<DecodedFrame>(queue: .main)
+
     
     // VMX Decoder
     private var vmxBridge: OMTVMXBridge?
@@ -83,7 +97,9 @@ class OMTReceiver {
     func start() {
         guard !isRunning else { return }
         isRunning = true
-        
+        decodeWorker.start()
+        displayWorker.start()
+
         receiveBuffer.removeAll(keepingCapacity: true)
         parsedFrameCount = 0
         framesReceived = 0
@@ -177,7 +193,9 @@ class OMTReceiver {
     func stop() {
         guard isRunning else { return }
         isRunning = false
-        
+        decodeWorker.stop()
+        displayWorker.stop()
+
         connection?.cancel()
         connection = nil
         
@@ -188,10 +206,14 @@ class OMTReceiver {
         audioPlayer?.stop()
         audioPlayer = nil
         
-        vmxBridge?.destroy()
-        vmxBridge = nil
-        currentWidth = 0
-        currentHeight = 0
+        // Never destroy the VMX instance while an in-flight frame is decoding.
+        // New sessions queue their work after this cleanup on decodeQueue.
+        decodeQueue.async { [weak self] in
+            self?.vmxBridge?.destroy()
+            self?.vmxBridge = nil
+            self?.currentWidth = 0
+            self?.currentHeight = 0
+        }
         
         receiveBuffer.removeAll(keepingCapacity: false)
         NSLog("[OMTReceiver] Stopped receiver for %@", sourceName)
@@ -237,8 +259,8 @@ class OMTReceiver {
         guard let conn = connection, isRunning else { return }
         
         conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] content, context, isComplete, error in
-            guard let self = self else { return }
-            
+            guard let self = self, self.isRunning else { return }
+
             if let error = error {
                 NSLog("[OMTReceiver] Receive error after %lld bytes: %@", self.bytesReceived, String(describing: error))
                 self.onDiagnostic?("Receive error after \(self.bytesReceived) bytes: \(error)")
@@ -373,25 +395,41 @@ class OMTReceiver {
             return
         }
         
-        // Dispatch frame decoding to concurrent decode queue
-        decodeQueue.async { [weak self] in
+        let packet = VideoPacket(codec: codec, width: width, height: height, data: videoData)
+        let replaced = decodeWorker.submit(packet) { [weak self] packet, generation in
             guard let self = self, self.isRunning else { return }
-            
-            if codec == OMTVideoCodec.vmx1 {
+            if packet.codec == OMTVideoCodec.vmx1 {
                 self.codecName = "VMX1"
-                self.decodeVMX1Frame(videoData: videoData, width: width, height: height)
-            } else if codec == OMTVideoCodec.uyvy {
+                self.decodeVMX1Frame(videoData: packet.data, width: packet.width,
+                                     height: packet.height, generation: generation)
+            } else if packet.codec == OMTVideoCodec.uyvy {
                 self.codecName = "UYVY"
-                self.decodeUYVYFrame(videoData: videoData, width: width, height: height)
+                self.decodeUYVYFrame(videoData: packet.data, width: packet.width,
+                                     height: packet.height, generation: generation)
             } else {
-                // Unknown codec FourCC
-                self.codecName = String(format: "0x%08X", codec)
+                self.codecName = String(format: "0x%08X", packet.codec)
                 self.framesDropped += 1
             }
         }
+        if replaced { framesDropped += 1 }
     }
-    
-    private func decodeVMX1Frame(videoData: Data, width: Int32, height: Int32) {
+
+    private func presentFrame(_ image: CGImage, width: Int32, height: Int32,
+                              generation: UInt64) {
+        guard decodeWorker.isCurrent(generation) else { return }
+        let frame = DecodedFrame(image: image, width: width, height: height)
+        displayWorker.submit(frame) { [weak self] frame, _ in
+            guard let self = self, self.isRunning,
+                  self.decodeWorker.isCurrent(generation) else { return }
+            self.onFrameDecoded?(frame.image, frame.width, frame.height)
+            NotificationCenter.default.post(
+                name: NSNotification.Name("OMTFrameDecoded"), object: nil,
+                userInfo: ["image": frame.image, "width": frame.width, "height": frame.height]
+            )
+        }
+    }
+
+    private func decodeVMX1Frame(videoData: Data, width: Int32, height: Int32, generation: UInt64) {
         // Initialize or update VMX bridge if resolution changed
         if vmxBridge == nil || currentWidth != width || currentHeight != height {
             vmxBridge?.destroy()
@@ -419,15 +457,7 @@ class OMTReceiver {
             if let cgImage = createCGImage(from: bgraData, width: Int(width), height: Int(height), stride: stride) {
                 framesDecoded += 1
                 framesSinceLastStat += 1
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    self.onFrameDecoded?(cgImage, width, height)
-                    NotificationCenter.default.post(
-                        name: NSNotification.Name("OMTFrameDecoded"),
-                        object: nil,
-                        userInfo: ["image": cgImage, "width": width, "height": height]
-                    )
-                }
+                self.presentFrame(cgImage, width: width, height: height, generation: generation)
             } else {
                 framesDropped += 1
             }
@@ -439,7 +469,7 @@ class OMTReceiver {
         }
     }
     
-    private func decodeUYVYFrame(videoData: Data, width: Int32, height: Int32) {
+    private func decodeUYVYFrame(videoData: Data, width: Int32, height: Int32, generation: UInt64) {
         let numPixels = Int(width * height)
         guard videoData.count >= numPixels * 2 else {
             framesDropped += 1
@@ -486,15 +516,7 @@ class OMTReceiver {
         if let cgImage = createCGImage(from: bgraData, width: Int(width), height: Int(height), stride: Int(width) * 4) {
             framesDecoded += 1
             framesSinceLastStat += 1
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.onFrameDecoded?(cgImage, width, height)
-                NotificationCenter.default.post(
-                    name: NSNotification.Name("OMTFrameDecoded"),
-                    object: nil,
-                    userInfo: ["image": cgImage, "width": width, "height": height]
-                )
-            }
+            self.presentFrame(cgImage, width: width, height: height, generation: generation)
         } else {
             framesDropped += 1
         }
@@ -611,8 +633,8 @@ class OMTReceiver {
         guard let conn = audioConnection, isRunning else { return }
         
         conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] content, context, isComplete, error in
-            guard let self = self else { return }
-            
+            guard let self = self, self.isRunning else { return }
+
             if let error = error {
                 NSLog("[OMTReceiver][AudioTCP] Audio receive error: %@ (video unaffected)", error.localizedDescription)
                 self.audioConnection?.cancel()

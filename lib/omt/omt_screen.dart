@@ -52,6 +52,7 @@ class _OMTScreenState extends State<OMTScreen>
 
   Future<void> _initService() async {
     await _omtService.initialize();
+    if (!mounted) return;
 
     _stateSub = _omtService.stateStream.listen((state) {
       if (mounted) setState(() => _connectionState = state);
@@ -101,6 +102,7 @@ class _OMTScreenState extends State<OMTScreen>
     if (_isDiscovering) return;
     setState(() => _isDiscovering = true);
     await _omtService.startDiscovery();
+    if (!mounted) return;
 
     // Refresh sources every 5s
     _discoveryTimer?.cancel();
@@ -199,6 +201,8 @@ class _OMTScreenState extends State<OMTScreen>
     _statsSub?.cancel();
     _discoveryTimer?.cancel();
     _statsTimer?.cancel();
+    _omtService.stopDiscovery();
+    _omtService.dispose();
     super.dispose();
   }
 

@@ -20,12 +20,13 @@ class NDIViewFactory: NSObject, FlutterPlatformViewFactory {
 class NDIView: NSObject, FlutterPlatformView {
     private var _view: UIView
     private var displayLayer: CALayer?
-    private var isRunning = true
+    private var isRunning: Bool { capturePump.isRunning }
     private var channel: FlutterMethodChannel?
     
     // NDI Receiver
     private var recvInstance: NDIlib_recv_instance_t?
     private let receiveQueue = DispatchQueue(label: "ndi.receive.queue", qos: .userInteractive)
+    private lazy var capturePump = SerialCapturePump(queue: receiveQueue)
     private var currentSourceName: String?
     private var currentQuality: String = "480p"
     private var hasReceivedFirstFrame = false
@@ -33,7 +34,7 @@ class NDIView: NSObject, FlutterPlatformView {
     // Auto-Recovery (Auto-Healing)
     private var lastCaptureTime: TimeInterval = CACurrentMediaTime()
     private var isRecovering = false
-    private let recoveryQueue = DispatchQueue(label: "ndi.recovery.queue", qos: .background)
+    private let framePresenter = LatestValueWorker<CGImage>(queue: .main)
     
     // Rendering & Throttling
     private var lastFrameTime: TimeInterval = 0
@@ -83,11 +84,14 @@ class NDIView: NSObject, FlutterPlatformView {
             if let name = params["name"] as? String {
                 self.currentSourceName = name
                 self.currentQuality = params["quality"] as? String ?? "Lowest"
-                self.startReceive(sourceName: name, quality: self.currentQuality)
+
             }
         }
         
         startCaptureLoop()
+        if let name = currentSourceName {
+            startReceive(sourceName: name, quality: currentQuality)
+        }
     }
 
     func view() -> UIView { 
@@ -108,26 +112,32 @@ class NDIView: NSObject, FlutterPlatformView {
             isRecording ? stopRecording() : startRecording()
             result(isRecording)
         case "setMuted":
-            if let m = call.arguments as? Bool {
-                self.isMuted = m
-                if m {
-                    playerNode?.pause()
-                } else {
-                    if audioEngine == nil {
-                        setupAudioEngine()
+            guard let muted = call.arguments as? Bool else {
+                result(FlutterError(code: "INVALID_ARGS", message: "Expected Bool", details: nil))
+                return
+            }
+            receiveQueue.async { [weak self] in
+                if let self = self, self.isRunning {
+                    self.isMuted = muted
+                    if muted {
+                        self.playerNode?.pause()
                     } else {
-                        if !(audioEngine?.isRunning ?? false) {
-                            try? audioEngine?.start()
-                        }
-                        playerNode?.play()
+                        if self.audioEngine == nil { self.setupAudioEngine() }
+                        if !(self.audioEngine?.isRunning ?? false) { try? self.audioEngine?.start() }
+                        self.playerNode?.play()
                     }
                 }
-                result(true)
+                DispatchQueue.main.async { result(true) }
             }
         case "switchQuality":
             if let q = call.arguments as? String {
-                self.currentQuality = q
-                if let name = currentSourceName { self.startReceive(sourceName: name, quality: q) }
+                receiveQueue.async { [weak self] in
+                    guard let self = self, self.isRunning else { return }
+                    self.currentQuality = q
+                    if let name = self.currentSourceName {
+                        self.startReceive(sourceName: name, quality: q)
+                    }
+                }
                 result(true)
             }
         case "refreshSources":
@@ -198,12 +208,11 @@ class NDIView: NSObject, FlutterPlatformView {
 
     private func startReceive(sourceName: String, quality: String) {
         guard isRunning else { return }
-        // Flush audio buffer queue immediately on source switch
-        playerNode?.stop()
-        playerNode?.play()
-        
         receiveQueue.async { [weak self] in
             guard let self = self, self.isRunning else { return }
+            self.framePresenter.start()
+            self.playerNode?.stop()
+            self.playerNode?.play()
             if let old = self.recvInstance { NDIlib_recv_destroy(old); self.recvInstance = nil }
             guard self.isRunning else { return }
             var recvCreate = NDIlib_recv_create_v3_t()
@@ -226,62 +235,51 @@ class NDIView: NSObject, FlutterPlatformView {
     }
 
     private func startCaptureLoop() {
-        receiveQueue.async { [weak self] in
-            while let self = self, self.isRunning {
-                autoreleasepool {
-                    guard let recv = self.recvInstance else { usleep(50000); return }
-                    var v = NDIlib_video_frame_v2_t()
-                    var a = NDIlib_audio_frame_v2_t()
-                    var m = NDIlib_metadata_frame_t()
-                    let type = NDIlib_recv_capture_v2(recv, &v, &a, &m, 16)
-                    
-                    if type == NDIlib_frame_type_video {
-                        self.lastCaptureTime = CACurrentMediaTime()
-                        let now = CACurrentMediaTime()
-                        if now - self.lastFrameTime >= self.frameInterval {
-                            self.lastFrameTime = now
-                            self.renderAndDisplay(v)
-                        }
-                        var mutV = v
-                        NDIlib_recv_free_video_v2(recv, &mutV)
-                    } else if type == NDIlib_frame_type_audio {
-                        // Heartbeat based on audio too is safer
-                        self.lastCaptureTime = CACurrentMediaTime()
-                        if !self.isMuted { self.playAudio(a) }
-                        var mutA = a
-                        NDIlib_recv_free_audio_v2(recv, &mutA)
-                    } else if type == NDIlib_frame_type_metadata {
-                        var mutM = m
-                        NDIlib_recv_free_metadata(recv, &mutM)
-                    } else {
-                        // Check for Auto-Recovery if no frame received
-                        if CACurrentMediaTime() - self.lastCaptureTime > 2.0 {
-                            self.performAutoRecovery()
-                        }
-                        usleep(4000)
+        capturePump.start { [weak self] in
+            guard let self = self else { return 0.05 }
+            return autoreleasepool {
+                guard let recv = self.recvInstance else {
+                    if CACurrentMediaTime() - self.lastCaptureTime > 2 {
+                        self.performAutoRecovery()
                     }
+                    return 0.05
                 }
+                var video = NDIlib_video_frame_v2_t()
+                var audio = NDIlib_audio_frame_v2_t()
+                var metadata = NDIlib_metadata_frame_t()
+                let type = NDIlib_recv_capture_v2(recv, &video, &audio, &metadata, 16)
+                if type == NDIlib_frame_type_video {
+                    self.lastCaptureTime = CACurrentMediaTime()
+                    let now = CACurrentMediaTime()
+                    if now - self.lastFrameTime >= self.frameInterval {
+                        self.lastFrameTime = now
+                        self.renderAndDisplay(video)
+                    }
+                    NDIlib_recv_free_video_v2(recv, &video)
+                } else if type == NDIlib_frame_type_audio {
+                    self.lastCaptureTime = CACurrentMediaTime()
+                    if !self.isMuted { self.playAudio(audio) }
+                    NDIlib_recv_free_audio_v2(recv, &audio)
+                } else if type == NDIlib_frame_type_metadata {
+                    NDIlib_recv_free_metadata(recv, &metadata)
+                } else if CACurrentMediaTime() - self.lastCaptureTime > 2 {
+                    self.performAutoRecovery()
+                }
+                // Yield to queued reconnection/quality/stop commands each frame.
+                return 0.001
             }
         }
     }
 
+    // Called only on receiveQueue, so recovery state is serialized with capture.
     private func performAutoRecovery() {
         guard isRunning, !isRecovering, let name = currentSourceName else { return }
         isRecovering = true
-        print("⚠️ Flux NDI perdu (Heartbeat Timeout). Tentative de reconnexion automatique...")
-        
-        recoveryQueue.async { [weak self] in
-            guard let self = self, self.isRunning else { return }
-            // Reset discovery manually to refresh network targets
-            self.refreshSources()
-            
-            // Restart receiver (Always keeping Proxy/Current quality priority)
-            self.startReceive(sourceName: name, quality: self.currentQuality)
-            
-            // Wait a bit before resetting flag to avoid recovery-loop
-            usleep(2000000) // 2s
-            self.lastCaptureTime = CACurrentMediaTime()
-            self.isRecovering = false
+        lastCaptureTime = CACurrentMediaTime()
+        refreshSources()
+        startReceive(sourceName: name, quality: currentQuality)
+        receiveQueue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.isRecovering = false
         }
     }
 
@@ -305,12 +303,12 @@ class NDIView: NSObject, FlutterPlatformView {
             
             if let cgImage = NDIManager.shared.sharedCIContext.createCGImage(ciImage, from: ciImage.extent) {
                 // ZERO LATENCY: Render directly to CALayer, no buffer
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
+                framePresenter.submit(cgImage) { [weak self] image, _ in
+                    guard let self = self, self.isRunning else { return }
                     CATransaction.begin()
                     CATransaction.setDisableActions(true)
                     self.displayLayer?.frame = self._view.bounds
-                    self.displayLayer?.contents = cgImage
+                    self.displayLayer?.contents = image
                     CATransaction.commit()
                 }
                 
@@ -460,28 +458,32 @@ class NDIView: NSObject, FlutterPlatformView {
 
     func stop() {
         guard isRunning else { return }
-        isRunning = false
+        capturePump.stop()
+        framePresenter.stop()
         if isRecording { stopRecording() }
-        if let node = playerNode {
-            node.stop()
-            audioEngine?.stop()
-            audioEngine?.detach(node)
-            playerNode = nil
-            audioEngine = nil
-        }
-        
         channel?.setMethodCallHandler(nil)
         channel = nil
-        
-        // 🛡️ CRITICAL FIX: Destroy NDI receiver on its own queue to avoid SIGABRT
-        let oldRecv = self.recvInstance
-        self.recvInstance = nil
-        receiveQueue.async {
-            if let recv = oldRecv { NDIlib_recv_destroy(recv) }
+        // Capture and destruction stay on the SAME serial queue. This closure
+        // keeps the view alive until its in-flight capture has released frames.
+        receiveQueue.async { [self] in
+            if let recv = recvInstance { NDIlib_recv_destroy(recv) }
+            recvInstance = nil
+            playerNode?.stop()
+            audioEngine?.stop()
+            if let node = playerNode { audioEngine?.detach(node) }
+            playerNode = nil
+            audioEngine = nil
         }
     }
 
     deinit {
-        stop()
+        // No step can hold self here. Do not enqueue an escaping strong self
+        // from deinit; explicit stop() already drains its queue before release.
+        capturePump.stop()
+        framePresenter.stop()
+        if let recv = recvInstance { NDIlib_recv_destroy(recv) }
+        playerNode?.stop()
+        audioEngine?.stop()
+        channel?.setMethodCallHandler(nil)
     }
 }

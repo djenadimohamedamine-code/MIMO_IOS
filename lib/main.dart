@@ -1362,6 +1362,8 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
   
   // 🔊 VOLUME DEBOUNCING
   Timer? _volumeTimer;
+  Timer? _takeFeedbackTimer;
+  Timer? _autoFeedbackTimer;
   double? _lastVolumeSent;
 
   int? _programIndex;
@@ -1382,6 +1384,7 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       _tricasterIp = prefs.getString('switch_api_url') ?? "192.168.1.100";
       _programIndex = prefs.getInt('last_program_index');
@@ -1513,6 +1516,10 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
 
   @override
   void dispose() {
+    _volumeTimer?.cancel();
+    _takeFeedbackTimer?.cancel();
+    _autoFeedbackTimer?.cancel();
+    if (_speechEnabled) _speechToText.cancel();
     if (_mode == SwitcherMode.relay) _channel.invokeMethod('stopRelay');
     super.dispose();
   }
@@ -1591,7 +1598,11 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
     if (_programIndex != null) await prefs.setInt('last_program_index', _programIndex!);
     if (_previewIndex != null) await prefs.setInt('last_preview_index', _previewIndex!);
 
-    Timer(const Duration(milliseconds: 300), () => setState(() => _isTakeActive = false));
+    if (!mounted) return;
+    _takeFeedbackTimer?.cancel();
+    _takeFeedbackTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _isTakeActive = false);
+    });
     if (_mode == SwitcherMode.api) {
         await _tricasterCall('main_background_take&value=0');
     }
@@ -1611,7 +1622,11 @@ class _SwitcherScreenState extends State<SwitcherScreen> {
     if (_programIndex != null) await prefs.setInt('last_program_index', _programIndex!);
     if (_previewIndex != null) await prefs.setInt('last_preview_index', _previewIndex!);
 
-    Timer(const Duration(milliseconds: 300), () => setState(() => _isAutoActive = false));
+    if (!mounted) return;
+    _autoFeedbackTimer?.cancel();
+    _autoFeedbackTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _isAutoActive = false);
+    });
     if (_mode == SwitcherMode.api) {
         await _tricasterCall('main_background_auto&value=0');
     }

@@ -34,7 +34,7 @@ begin
   # 2. Add Swift and C++/ObjC files to the project
   group = project.main_group.find_subpath('Runner', true)
   files = [
-    'NDIManager.swift', 'NDIView.swift', 'NdiCameraPreview.swift', 'CrashLogger.swift', 'Runner-Bridging-Header.h',
+    'StreamScheduling.swift', 'NDIManager.swift', 'NDIView.swift', 'NdiCameraPreview.swift', 'CrashLogger.swift', 'Runner-Bridging-Header.h',
     'OMTProtocol.swift', 'OMTDiscovery.swift', 'OMTVideoCapture.swift', 'OMTSender.swift', 'OMTManager.swift',
     'OMTVideoEncoder.swift', 'OMTTestPattern.swift', 'OMTCameraPreview.swift',
     'OMTReceiver.swift', 'OMTReceiverView.swift', 'OMTVMXBridge.h', 'OMTVMXBridge.mm',

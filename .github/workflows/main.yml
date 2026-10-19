@@ -1,11 +1,36 @@
 name: MIMO_NDI_BUILD
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "fix/stream-lifecycle-20261019" ]
   workflow_dispatch:
 
 jobs:
+  validate:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+          cache: true
+      - name: Resolve dependencies
+        run: flutter pub get
+      - name: Analyze Flutter source and tests
+        # Existing lint warnings remain visible; all analysis errors are fatal.
+        run: flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings lib test
+      - name: Flutter lifecycle regression tests
+        run: flutter test --no-pub
+      - name: Native production scheduling regression tests
+        run: |
+          swiftc ios/Runner/StreamScheduling.swift tests/native/StreamSchedulingTests.swift -o /tmp/mimo-stream-tests
+          /tmp/mimo-stream-tests
+      - name: Existing OMT protocol simulations
+        run: python3 test_omt_protocol.py
+
   build_ios:
+    needs: validate
     runs-on: macos-14
     steps:
       - name: Checkout
@@ -67,19 +92,24 @@ jobs:
       - name: Build_iOS
         run: |
           flutter build ios --release --no-codesign --verbose \
-            --dart-define=FLUTTER_XCODE_SWIFT_TREAT_WARNINGS_AS_ERRORS=NO
+            --dart-define=FLUTTER_XCODE_SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
+            --dart-define=MIMO_BUILD_SHA=${{ github.sha }}
           cd build/ios/iphoneos
           mkdir -p Payload
           cp -r Runner.app Payload/
           zip -r MIMO_NDI.ipa Payload
+          git rev-parse HEAD > build-commit.txt
 
       - name: Upload_iOS
         uses: actions/upload-artifact@v4
         with:
-          name: mimo-ndi-ipa
-          path: build/ios/iphoneos/MIMO_NDI.ipa
+          name: mimo-ndi-ipa-${{ github.sha }}
+          path: |
+            build/ios/iphoneos/MIMO_NDI.ipa
+            build/ios/iphoneos/build-commit.txt
 
   build_android:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -133,5 +163,5 @@ jobs:
       - name: Upload_Android
         uses: actions/upload-artifact@v4
         with:
-          name: mimo-ndi-apk
+          name: mimo-ndi-apk-${{ github.sha }}
           path: build/app/outputs/flutter-apk/app-release.apk

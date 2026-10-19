@@ -35,17 +35,27 @@ class OMTService {
   OMTConnectionState _currentState = OMTConnectionState.idle;
   List<OMTSource> _discoveredSources = [];
   StreamSubscription<dynamic>? _eventSubscription;
+  Future<void>? _shutdownFuture;
+  int _lifecycleGeneration = 0;
 
   OMTConnectionState get currentState => _currentState;
   List<OMTSource> get discoveredSources => List.unmodifiable(_discoveredSources);
 
   /// Initialize the OMT service and subscribe to native events
   Future<void> initialize() async {
+    final generation = _lifecycleGeneration;
+    final shutdown = _shutdownFuture;
+    if (shutdown != null) await shutdown;
+    if (generation != _lifecycleGeneration || _eventSubscription != null) return;
     try {
       _eventSubscription = _eventChannel.receiveBroadcastStream().listen(
-        _handleNativeEvent,
-        onError: (error) {
-          _errorController.add('Event channel error: $error');
+        (event) {
+          if (generation == _lifecycleGeneration) _handleNativeEvent(event);
+        },
+        onError: (Object error) {
+          if (generation == _lifecycleGeneration) {
+            _errorController.add('Event channel error: $error');
+          }
         },
       );
     } catch (e) {
@@ -302,11 +312,17 @@ class OMTService {
 
   // ─── CLEANUP ──────────────────────────────────────────────────────────────
 
-  void dispose() {
-    _eventSubscription?.cancel();
-    _stateController.close();
-    _sourcesController.close();
-    _errorController.close();
-    _statsController.close();
+  Future<void> dispose() {
+    _lifecycleGeneration++;
+    final subscription = _eventSubscription;
+    _eventSubscription = null;
+    if (subscription == null) return _shutdownFuture ?? Future<void>.value();
+    final shutdown = subscription.cancel();
+    _shutdownFuture = shutdown;
+    // This singleton is reused when the OMT screen is reopened. Its public
+    // controllers stay open; only the native subscription belongs to a visit.
+    return shutdown.whenComplete(() {
+      if (identical(_shutdownFuture, shutdown)) _shutdownFuture = null;
+    });
   }
 }
