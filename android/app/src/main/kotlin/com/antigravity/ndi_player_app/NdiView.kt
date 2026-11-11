@@ -3,17 +3,27 @@ package com.antigravity.ndi_player_app
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.TextureView
 import android.view.View
+import io.flutter.plugin.common.BinaryMessenger
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.platform.PlatformView
-import android.util.Log
 
-class NdiView(context: Context, id: Int, private val creationParams: Map<String?, Any?>?) : PlatformView {
+class NdiView(
+    context: Context, 
+    private val viewId: Int, 
+    private val creationParams: Map<String?, Any?>?,
+    binaryMessenger: BinaryMessenger?
+) : PlatformView, MethodChannel.MethodCallHandler {
+
     private val textureView: TextureView = TextureView(context)
     private var isRunning = true
     private var pInstance: Long = 0
@@ -24,44 +34,83 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
     
     // Audio Player
     private var audioTrack: AudioTrack? = null
-    private val isMuted = creationParams?.get("muted") as? Boolean ?: false
+    private var isMuted = creationParams?.get("muted") as? Boolean ?: false
 
     // Quality settings
-    private var currentQuality = creationParams?.get("quality") as? String ?: "480p"
+    private var currentQuality = creationParams?.get("quality") as? String ?: "Highest"
     private var sourceName = creationParams?.get("name") as? String ?: ""
 
+    private var methodChannel: MethodChannel? = null
+
     init {
+        if (binaryMessenger != null) {
+            methodChannel = MethodChannel(binaryMessenger, "com.antigravity/ndi_view_$viewId")
+            methodChannel?.setMethodCallHandler(this)
+        }
+
         if (!isMuted) setupAudioTrack()
         
         textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, w: Int, h: Int) {
                 synchronized(lock) {
-                    pInstance = createReceiver(sourceName, currentQuality == "480p")
+                    if (pInstance == 0L) {
+                        pInstance = createReceiver(sourceName, currentQuality == "480p")
+                    }
                 }
-                startNativeReceiverLoop()
-                if (!isMuted) startAudioLoop()
+                startUnifiedCaptureLoop()
             }
             override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, w: Int, h: Int) {}
             override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
-                isRunning = false
-                synchronized(lock) {
-                    if (pInstance != 0L) {
-                        destroyReceiver(pInstance)
-                        pInstance = 0
-                    }
-                }
-                audioTrack?.stop()
-                audioTrack?.release()
+                stopPlayback()
                 return true
             }
             override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) {}
         }
     }
 
+    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "stop", "dispose" -> {
+                stopPlayback()
+                result.success(true)
+            }
+            "setMuted" -> {
+                val m = call.arguments as? Boolean ?: false
+                isMuted = m
+                if (isMuted) {
+                    audioTrack?.pause()
+                    audioTrack?.flush()
+                } else {
+                    if (audioTrack == null) setupAudioTrack()
+                    audioTrack?.play()
+                }
+                result.success(true)
+            }
+            "switchQuality" -> {
+                val q = call.arguments as? String ?: "Highest"
+                currentQuality = q
+                synchronized(lock) {
+                    if (pInstance != 0L) {
+                        destroyReceiver(pInstance)
+                        pInstance = createReceiver(sourceName, currentQuality == "480p")
+                        lastFrameTime = System.currentTimeMillis()
+                    }
+                }
+                result.success(true)
+            }
+            "refreshSources" -> {
+                NDIManager.refreshSources()
+                result.success(true)
+            }
+            else -> result.notImplemented()
+        }
+    }
+
     private fun setupAudioTrack() {
         try {
             val minBufSize = AudioTrack.getMinBufferSize(48000, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_FLOAT)
-            
+            val bufSize = if (minBufSize > 0) minBufSize * 2 else 4096 * 4
+
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                 audioTrack = AudioTrack.Builder()
                     .setAudioAttributes(AudioAttributes.Builder()
@@ -73,18 +122,17 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
                         .setSampleRate(48000)
                         .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
                         .build())
-                    .setBufferSizeInBytes(minBufSize * 2)
+                    .setBufferSizeInBytes(bufSize)
                     .setTransferMode(AudioTrack.MODE_STREAM)
                     .build()
             } else {
-                // Pre-Marshmallow fallback
                 @Suppress("DEPRECATION")
                 audioTrack = AudioTrack(
                     android.media.AudioManager.STREAM_MUSIC,
                     48000,
                     AudioFormat.CHANNEL_OUT_STEREO,
                     AudioFormat.ENCODING_PCM_FLOAT,
-                    minBufSize * 2,
+                    bufSize,
                     AudioTrack.MODE_STREAM
                 )
             }
@@ -96,10 +144,9 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
         }
     }
 
-
     override fun getView(): View = textureView
 
-    override fun dispose() {
+    private fun stopPlayback() {
         isRunning = false
         synchronized(lock) {
             if (pInstance != 0L) {
@@ -107,70 +154,89 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
                 pInstance = 0
             }
         }
-        audioTrack?.stop()
-        audioTrack?.release()
+        try {
+            audioTrack?.pause()
+            audioTrack?.flush()
+            audioTrack?.stop()
+            audioTrack?.release()
+            audioTrack = null
+        } catch (e: Exception) {}
     }
 
-    private fun startAudioLoop() {
+    override fun dispose() {
+        stopPlayback()
+        methodChannel?.setMethodCallHandler(null)
+    }
+
+    private fun startUnifiedCaptureLoop() {
         Thread {
+            var targetW = 1920
+            var targetH = 1080
+            var bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+            val dim = IntArray(2)
+            val audioHolder = arrayOfNulls<FloatArray>(1)
+
             while (isRunning) {
                 var ptr: Long = 0
                 synchronized(lock) { ptr = pInstance }
-                
-                if (ptr != 0L) {
-                    val floatData = captureAudio(ptr)
-                    // The JNI now always sends INTERLEAVED STEREO data
-                    if (floatData != null && floatData.isNotEmpty()) {
-                        audioTrack?.write(floatData, 0, floatData.size, AudioTrack.WRITE_BLOCKING)
-                    } else {
-                        try { Thread.sleep(5) } catch (e: Exception) {}
+
+                if (ptr == 0L) {
+                    try { Thread.sleep(20) } catch (e: Exception) {}
+                    continue
+                }
+
+                audioHolder[0] = null
+                val result = captureFrame(ptr, bitmap, dim, audioHolder)
+
+                if (result == 1) {
+                    // Video frame received
+                    lastFrameTime = System.currentTimeMillis()
+                    drawToSurface(bitmap)
+                } else if (result == 2) {
+                    // Audio frame received
+                    lastFrameTime = System.currentTimeMillis()
+                    val floatData = audioHolder[0]
+                    if (!isMuted && floatData != null && floatData.isNotEmpty()) {
+                        audioTrack?.write(floatData, 0, floatData.size, AudioTrack.WRITE_NON_BLOCKING)
+                    }
+                } else if (result == -1) {
+                    // Resolution changed!
+                    val newW = dim[0]
+                    val newH = dim[1]
+                    if (newW > 0 && newH > 0 && (newW != targetW || newH != targetH)) {
+                        Log.d("NDIView", "Adapting resolution dynamically to: ${newW}x${newH}")
+                        targetW = newW
+                        targetH = newH
+                        bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+                        lastFrameTime = System.currentTimeMillis()
                     }
                 } else {
-                    try { Thread.sleep(100) } catch (e: Exception) {}
-                }
-            }
-        }.start()
-    }
-
-    private fun startNativeReceiverLoop() {
-        Thread {
-            var targetW = if (currentQuality == "480p") 960 else 1920
-            var targetH = if (currentQuality == "480p") 540 else 1080
-            var bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
-            
-            while (isRunning) {
-                var ptr: Long = 0
-                synchronized(lock) { ptr = pInstance }
-
-                if (ptr != 0L) {
-                    val captured = captureFrameToBitmap(ptr, bitmap)
-                    if (captured == 1) {
-                        lastFrameTime = System.currentTimeMillis()
-                        drawToSurface(bitmap)
-                    } else if (captured == -1) {
-                        val res = getFrameResolution(ptr)
-                        if (res[0] > 0 && res[1] > 0 && (res[0] != targetW || res[1] != targetH)) {
-                            targetW = res[0]
-                            targetH = res[1]
-                            bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
-                            lastFrameTime = System.currentTimeMillis()
-                        }
-                    } else {
-                        if (System.currentTimeMillis() - lastFrameTime > 3000 && !isRecovering) {
-                            performAutoRecovery()
-                        }
-                        try { Thread.sleep(2) } catch (e: Exception) {}
+                    // Timeout (0)
+                    if (System.currentTimeMillis() - lastFrameTime > 5000 && !isRecovering) {
+                        performAutoRecovery()
                     }
+                    try { Thread.sleep(1) } catch (e: Exception) {}
                 }
             }
-        }.start()
+        }.apply {
+            name = "NDICaptureThread"
+            isDaemon = true
+            start()
+        }
     }
 
     private fun drawToSurface(bitmap: Bitmap) {
+        if (!textureView.isAvailable) return
+        val w = textureView.width
+        val h = textureView.height
+        if (w <= 0 || h <= 0) return
+
         val canvas: Canvas? = textureView.lockCanvas()
         if (canvas != null) {
             try {
-                canvas.drawBitmap(bitmap, null, android.graphics.Rect(0, 0, textureView.width, textureView.height), null)
+                canvas.drawBitmap(bitmap, null, Rect(0, 0, w, h), null)
+            } catch (e: Exception) {
+                Log.e("NDIView", "drawBitmap error: ${e.message}")
             } finally {
                 textureView.unlockCanvasAndPost(canvas)
             }
@@ -185,7 +251,7 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
                 if (pInstance != 0L) destroyReceiver(pInstance)
                 pInstance = createReceiver(sourceName, currentQuality == "480p")
                 lastFrameTime = System.currentTimeMillis()
-                Log.d("NDIView", "Reconnection attempted.")
+                Log.d("NDIView", "Auto-recovery reconnection attempted.")
             }
             isRecovering = false
         }
@@ -193,7 +259,5 @@ class NdiView(context: Context, id: Int, private val creationParams: Map<String?
 
     private external fun createReceiver(name: String, lowBandwidth: Boolean): Long
     private external fun destroyReceiver(pInstance: Long)
-    private external fun getFrameResolution(pInstance: Long): IntArray
-    private external fun captureFrameToBitmap(pInstance: Long, bitmap: Bitmap): Int
-    private external fun captureAudio(pInstance: Long): FloatArray?
+    private external fun captureFrame(pInstance: Long, bitmap: Bitmap, outDim: IntArray, outAudio: Array<FloatArray?>): Int
 }

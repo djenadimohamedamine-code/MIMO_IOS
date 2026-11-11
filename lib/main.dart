@@ -522,7 +522,7 @@ class NdiPlayerScreen extends StatefulWidget {
 
 class _NdiPlayerScreenState extends State<NdiPlayerScreen> {
   MethodChannel? _viewChannel;
-  String _quality = "480p"; // Ô£à D├®marrage Forc├® en 480p (Proxy)
+  String _quality = "Highest"; // Démarre en plein débit pour une réception directe en temps réel
   bool _isLandscape = true;
   bool _isMuted = false;
   bool _isRecording = false;
