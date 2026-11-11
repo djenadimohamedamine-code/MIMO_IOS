@@ -119,7 +119,8 @@ Java_com_antigravity_ndi_1player_1app_NdiView_createReceiver(JNIEnv* env, jobjec
     }
 
     recv_create.color_format = NDIlib_recv_color_format_RGBX_RGBA; 
-    recv_create.bandwidth = isLowBandwidth ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest;
+    // Always use highest bandwidth to guarantee frame reception across all NDI senders (e.g. OBS/vMix without proxy)
+    recv_create.bandwidth = NDIlib_recv_bandwidth_highest;
     recv_create.allow_video_fields = false;
 
     NDIlib_recv_instance_t p_instance = NDIlib_recv_create_v3(&recv_create);

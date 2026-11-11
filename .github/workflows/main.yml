@@ -115,7 +115,6 @@ jobs:
             build/ios/iphoneos/build-commit.txt
 
   build_android:
-    needs: validate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
